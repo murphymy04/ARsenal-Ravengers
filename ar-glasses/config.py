@@ -10,7 +10,8 @@ DB_PATH = DATA_DIR / "people.db"
 EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
 EDGEFACE_CHECKPOINT = EDGEFACE_ROOT / "checkpoints" / "edgeface_xs_gamma_06.pt"
 
-# Face detection (OpenCV Haar Cascade)
+# Face detection (MediaPipe BlazeFace)
+DETECTION_CONFIDENCE = 0.5
 FACE_CROP_SIZE = 112  # EdgeFace expects 112x112
 
 # Face embedding
