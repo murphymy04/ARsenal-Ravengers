@@ -1,0 +1,13 @@
+[project]
+name = "knowledge"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "graphiti-core",
+    "openai",
+    "python-dotenv",
+    "uvicorn[standard]",
+]
