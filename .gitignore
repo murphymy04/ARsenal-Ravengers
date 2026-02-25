@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+venv-win/
+.venv/
+env/
+ENV/
+
+# Database (runtime data)
+ar-glasses/data/
+
+# Model checkpoints (large binary files - already bundled in edgeface/checkpoints/)
+# Uncomment below if you want to exclude them from git:
+# *.pt
+# *.pth
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# dotenv
+.env
+.env.*
