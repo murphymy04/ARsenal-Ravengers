@@ -426,9 +426,14 @@ def main():
             "'db-delete' to remove a person or wipe the database"
         ),
     )
+    def _camera_source(val):
+        if val == "android":
+            return "android"
+        return int(val)
+
     parser.add_argument(
-        "--camera", type=int, default=CAMERA_SOURCE,
-        help="Camera source index (default: 0)",
+        "--camera", type=_camera_source, default=CAMERA_SOURCE,
+        help="Camera source index or 'android' for ADB/scrcpy (default: 0)",
     )
     args = parser.parse_args()
 
@@ -462,7 +467,11 @@ def main():
         if args.mode == "enroll":
             enroll_mode(db, detector, embedder)
         else:
-            camera = Camera(source=args.camera)
+            if args.camera == "android":
+                from input.android_camera import AndroidCamera
+                camera = AndroidCamera()
+            else:
+                camera = Camera(source=args.camera)
             display = Display()
             try:
                 run_video_loop(camera, detector, embedder, matcher, display, db)
