@@ -12,8 +12,6 @@ Two threads + optional third:
 import sys
 import time
 import argparse
-import os
-import tempfile
 from pathlib import Path
 
 # Ensure the project root is on sys.path regardless of where the script is invoked from
@@ -36,6 +34,35 @@ from processing.face_matcher import FaceMatcher
 from storage.database import Database
 from storage.enrollment import Enrollment
 from output.display import Display
+
+
+def _cv2_input(image: np.ndarray, prompt: str) -> str:
+    """Show image in a cv2 window and collect typed input. Returns the string on Enter, or
+    'DELETE' / '' on special commands. Backspace supported. Esc = skip."""
+    typed = ""
+    win = "Labeling"
+    while True:
+        display = image.copy()
+        cv2.putText(
+            display, f"{prompt}: {typed}_",
+            (10, display.shape[0] - 15),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
+        )
+        cv2.imshow(win, display)
+        key = cv2.waitKey(20) & 0xFF
+
+        if key == 13:          # Enter — confirm
+            break
+        elif key == 27:        # Esc — skip
+            typed = ""
+            break
+        elif key == 8 or key == 127:  # Backspace
+            typed = typed[:-1]
+        elif 32 <= key < 127:  # printable ASCII
+            typed += chr(key)
+
+    cv2.destroyWindow(win)
+    return typed
 
 
 def run_video_loop(
@@ -360,14 +387,12 @@ def label_mode(db: Database):
     for person in unlabeled:
         last_seen = person.last_seen.strftime("%Y-%m-%d %H:%M") if person.last_seen else "never"
         print(f"Cluster '{person.name}' | {len(person.embeddings)} embedding(s) | last seen: {last_seen}")
+        print("  Type name + Enter | Esc to skip | type 'delete' + Enter to remove")
 
         if person.thumbnail is not None:
-            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-            cv2.imwrite(tmp.name, person.thumbnail)
-            tmp.close()
-            os.startfile(tmp.name)
-
-        name = input("  Name: ").strip()
+            name = _cv2_input(person.thumbnail, "Name")
+        else:
+            name = input("  Name: ").strip()
 
         if name.lower() == "delete":
             db.delete_person(person.person_id)
