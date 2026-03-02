@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).parent
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "people.db"
 EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
-EDGEFACE_CHECKPOINT = EDGEFACE_ROOT / "checkpoints" / "edgeface_xs_gamma_06.pt"
+EDGEFACE_CHECKPOINT = EDGEFACE_ROOT / "checkpoints" / "edgeface_base.pt"
 
 # Face detection (MediaPipe BlazeFace)
 DETECTION_CONFIDENCE = 0.5
@@ -16,11 +16,19 @@ FACE_CROP_SIZE = 112  # EdgeFace expects 112x112
 
 # Face embedding
 EMBEDDING_DIM = 512
-EMBEDDING_MODEL_NAME = "edgeface_xs_gamma_06"
+EMBEDDING_MODEL_NAME = "edgeface_base"
 
 # Face matching
 MATCH_THRESHOLD = 0.4   # cosine similarity threshold for same person
 UNKNOWN_LABEL = "Unknown"
+
+# Unsupervised clustering
+EMBEDDING_UPDATE_INTERVAL = 60   # frames between accumulating new embeddings for a recognized person
+MAX_EMBEDDINGS_PER_PERSON = 20   # cap to prevent unbounded growth per person
+MIN_SIGHTINGS_TO_CLUSTER = 8     # consecutive observations needed before promoting to a real cluster
+PENDING_CLUSTER_SIMILARITY = 0.25  # cosine similarity threshold for grouping pending observations
+PENDING_EXPIRY_FRAMES = 90       # frames of absence before a pending observation is discarded
+MERGE_SIMILARITY_THRESHOLD = 0.35  # similarity above which two clusters are suggested for merging
 
 # Camera
 CAMERA_SOURCE = 0       # default webcam

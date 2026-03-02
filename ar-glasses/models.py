@@ -61,6 +61,7 @@ class Person:
     embeddings: List[FaceEmbedding] = field(default_factory=list)
     thumbnail: Optional[np.ndarray] = None  # BGR image
     notes: str = ""
+    is_labeled: bool = True   # False = auto-discovered cluster awaiting a real name
     created_at: Optional[datetime] = None
     last_seen: Optional[datetime] = None
 

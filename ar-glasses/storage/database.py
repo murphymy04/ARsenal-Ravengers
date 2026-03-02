@@ -29,6 +29,7 @@ class Database:
                 name        TEXT NOT NULL,
                 notes       TEXT DEFAULT '',
                 face_thumbnail BLOB,
+                is_labeled  INTEGER DEFAULT 1,
                 created_at  TEXT DEFAULT (datetime('now')),
                 last_seen   TEXT DEFAULT (datetime('now'))
             );
@@ -52,10 +53,25 @@ class Database:
             );
         """)
         self._conn.commit()
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Add columns introduced after initial deployment (idempotent)."""
+        try:
+            self._conn.execute("ALTER TABLE people ADD COLUMN is_labeled INTEGER DEFAULT 1")
+            self._conn.commit()
+        except Exception:
+            pass  # column already exists
 
     # --- People CRUD ---
 
-    def add_person(self, name: str, notes: str = "", thumbnail: Optional[np.ndarray] = None) -> int:
+    def add_person(
+        self,
+        name: str,
+        notes: str = "",
+        thumbnail: Optional[np.ndarray] = None,
+        is_labeled: bool = True,
+    ) -> int:
         """Add a new person. Returns the person_id."""
         thumb_blob = None
         if thumbnail is not None:
@@ -64,32 +80,53 @@ class Database:
             thumb_blob = buf.tobytes()
 
         cur = self._conn.execute(
-            "INSERT INTO people (name, notes, face_thumbnail) VALUES (?, ?, ?)",
-            (name, notes, thumb_blob),
+            "INSERT INTO people (name, notes, face_thumbnail, is_labeled) VALUES (?, ?, ?, ?)",
+            (name, notes, thumb_blob, int(is_labeled)),
         )
         self._conn.commit()
         return cur.lastrowid
 
+    def add_auto_person(self, thumbnail: Optional[np.ndarray] = None) -> tuple[int, str]:
+        """Create an auto-labeled cluster entry. Returns (person_id, auto_name)."""
+        person_id = self.add_person("__pending__", is_labeled=False, thumbnail=thumbnail)
+        auto_name = f"Person {person_id}"
+        self.update_person(person_id, name=auto_name)
+        return person_id, auto_name
+
     def get_person(self, person_id: int) -> Optional[Person]:
         """Get a single person by ID."""
         row = self._conn.execute(
-            "SELECT person_id, name, notes, face_thumbnail, created_at, last_seen "
+            "SELECT person_id, name, notes, face_thumbnail, is_labeled, created_at, last_seen "
             "FROM people WHERE person_id = ?", (person_id,)
         ).fetchone()
         if row is None:
             return None
         return self._row_to_person(row)
 
+    def get_person_by_name(self, name: str) -> Optional[Person]:
+        """Get the first person with an exact name match, or None."""
+        row = self._conn.execute(
+            "SELECT person_id, name, notes, face_thumbnail, is_labeled, created_at, last_seen "
+            "FROM people WHERE name = ? LIMIT 1", (name,)
+        ).fetchone()
+        return self._row_to_person(row) if row else None
+
     def get_all_people(self) -> List[Person]:
         """Get all people with their embeddings."""
         rows = self._conn.execute(
-            "SELECT person_id, name, notes, face_thumbnail, created_at, last_seen "
+            "SELECT person_id, name, notes, face_thumbnail, is_labeled, created_at, last_seen "
             "FROM people ORDER BY name"
         ).fetchall()
         return [self._row_to_person(r) for r in rows]
 
-    def update_person(self, person_id: int, name: str = None, notes: str = None):
-        """Update a person's name and/or notes."""
+    def update_person(
+        self,
+        person_id: int,
+        name: str = None,
+        notes: str = None,
+        is_labeled: bool = None,
+    ):
+        """Update a person's name, notes, and/or labeled status."""
         if name is not None:
             self._conn.execute(
                 "UPDATE people SET name = ? WHERE person_id = ?", (name, person_id)
@@ -97,6 +134,11 @@ class Database:
         if notes is not None:
             self._conn.execute(
                 "UPDATE people SET notes = ? WHERE person_id = ?", (notes, person_id)
+            )
+        if is_labeled is not None:
+            self._conn.execute(
+                "UPDATE people SET is_labeled = ? WHERE person_id = ?",
+                (int(is_labeled), person_id),
             )
         self._conn.commit()
 
@@ -168,7 +210,7 @@ class Database:
 
     def _row_to_person(self, row) -> Person:
         """Convert a database row to a Person object with embeddings."""
-        person_id, name, notes, thumb_blob, created_at, last_seen = row
+        person_id, name, notes, thumb_blob, is_labeled, created_at, last_seen = row
 
         thumbnail = None
         if thumb_blob:
@@ -184,6 +226,7 @@ class Database:
             embeddings=embeddings,
             thumbnail=thumbnail,
             notes=notes or "",
+            is_labeled=bool(is_labeled) if is_labeled is not None else True,
             created_at=datetime.fromisoformat(created_at) if created_at else None,
             last_seen=datetime.fromisoformat(last_seen) if last_seen else None,
         )

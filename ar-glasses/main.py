@@ -12,8 +12,23 @@ Two threads + optional third:
 import sys
 import time
 import argparse
+import os
+import tempfile
+from pathlib import Path
 
-from config import CAMERA_SOURCE
+# Ensure the project root is on sys.path regardless of where the script is invoked from
+sys.path.insert(0, str(Path(__file__).parent))
+
+import cv2
+import numpy as np
+
+from config import (
+    CAMERA_SOURCE, DB_PATH,
+    EMBEDDING_UPDATE_INTERVAL, MAX_EMBEDDINGS_PER_PERSON,
+    MIN_SIGHTINGS_TO_CLUSTER, PENDING_CLUSTER_SIMILARITY, PENDING_EXPIRY_FRAMES,
+    MERGE_SIMILARITY_THRESHOLD,
+)
+from models import IdentityMatch, Person
 from input.camera import Camera
 from processing.face_detector import FaceDetector
 from processing.face_embedder import FaceEmbedder
@@ -31,45 +46,115 @@ def run_video_loop(
     display: Display,
     db: Database,
 ):
-    """Main video loop: detect, embed, match, display."""
+    """Main video loop: detect, embed, match, display.
+
+    Unknown faces are held in a pending buffer until they have been seen
+    MIN_SIGHTINGS_TO_CLUSTER times consistently (similar embeddings within
+    PENDING_CLUSTER_SIMILARITY).  Only then is a real 'Person N' cluster
+    created in the database.  This prevents frame-to-frame embedding noise
+    from generating spurious clusters.
+
+    Known people accumulate fresh embeddings every EMBEDDING_UPDATE_INTERVAL
+    frames (capped at MAX_EMBEDDINGS_PER_PERSON) to stay robust over time.
+    """
     print("Starting video loop... Press 'q' to quit.")
 
-    # Load known people into the matcher
     people = db.get_all_people()
     matcher.update_gallery(people)
-    print(f"Loaded {len(people)} known people from database.")
+    labeled = sum(1 for p in people if p.is_labeled)
+    auto = len(people) - labeled
+    print(f"Loaded {len(people)} cluster(s) ({labeled} labeled, {auto} auto).")
+    print(f"New faces need {MIN_SIGHTINGS_TO_CLUSTER} consistent sightings before a cluster is created.")
 
     frame_count = 0
     start_time = time.time()
+    last_embedding_update: dict[int, int] = {}
+
+    # Pending observations for faces not yet promoted to real clusters.
+    # Each entry: {'embeddings': [...], 'thumbnail': np.ndarray, 'last_frame': int}
+    pending: list[dict] = []
 
     for frame in camera.frames():
         timestamp = time.time()
-
-        # Detect faces
         faces = detector.detect(frame, timestamp=timestamp)
 
-        # Embed and match each face
         matches = []
+        gallery_dirty = False
+
+        # Expire stale pending entries
+        pending = [p for p in pending if frame_count - p["last_frame"] < PENDING_EXPIRY_FRAMES]
+
         for face in faces:
             embedding = embedder.embed(face.crop)
             match = matcher.match(embedding)
-            matches.append(match)
 
-            # Update last_seen for recognized people
             if match.is_known:
                 db.update_last_seen(match.person_id)
+                frames_since = frame_count - last_embedding_update.get(match.person_id, 0)
+                if frames_since >= EMBEDDING_UPDATE_INTERVAL:
+                    person = db.get_person(match.person_id)
+                    if person and len(person.embeddings) < MAX_EMBEDDINGS_PER_PERSON:
+                        db.add_embedding(match.person_id, embedding)
+                        gallery_dirty = True
+                    last_embedding_update[match.person_id] = frame_count
+            else:
+                # Find the best matching pending cluster for this embedding
+                query = embedding.vector
+                qnorm = np.linalg.norm(query)
+                best_idx, best_score = -1, -1.0
 
-        # Draw overlays and display
+                if qnorm > 0:
+                    for i, pc in enumerate(pending):
+                        vecs = np.array([e.vector for e in pc["embeddings"][-5:]])
+                        mean_vec = vecs.mean(axis=0)
+                        mnorm = np.linalg.norm(mean_vec)
+                        if mnorm == 0:
+                            continue
+                        score = float(np.dot(query, mean_vec) / (qnorm * mnorm))
+                        if score > best_score:
+                            best_score, best_idx = score, i
+
+                if best_idx >= 0 and best_score >= PENDING_CLUSTER_SIMILARITY:
+                    # Accumulate into existing pending cluster
+                    pending[best_idx]["embeddings"].append(embedding)
+                    pending[best_idx]["last_frame"] = frame_count
+
+                    if len(pending[best_idx]["embeddings"]) >= MIN_SIGHTINGS_TO_CLUSTER:
+                        # Enough consistent sightings — promote to a real cluster
+                        thumbnail = pending[best_idx]["thumbnail"]
+                        person_id, auto_name = db.add_auto_person(thumbnail=thumbnail)
+                        for emb in pending[best_idx]["embeddings"]:
+                            db.add_embedding(person_id, emb)
+                        last_embedding_update[person_id] = frame_count
+                        pending.pop(best_idx)
+                        gallery_dirty = True
+                        print(f"\nDiscovered new face: {auto_name}")
+                        match = IdentityMatch(
+                            person_id=person_id, name=auto_name,
+                            confidence=1.0, is_known=True,
+                        )
+                else:
+                    # Start a new pending cluster for this face
+                    pending.append({
+                        "embeddings": [embedding],
+                        "thumbnail": cv2.cvtColor(face.crop, cv2.COLOR_RGB2BGR),
+                        "last_frame": frame_count,
+                    })
+
+            matches.append(match)
+
+        if gallery_dirty:
+            matcher.update_gallery(db.get_all_people())
+
         display.draw(frame, faces, matches)
         if not display.show(frame):
             break
 
-        # FPS counter (every 30 frames)
         frame_count += 1
         if frame_count % 30 == 0:
             elapsed = time.time() - start_time
             fps = frame_count / elapsed
-            print(f"\rFPS: {fps:.1f} | Faces: {len(faces)}", end="", flush=True)
+            print(f"\rFPS: {fps:.1f} | Faces: {len(faces)} | Pending: {len(pending)}", end="", flush=True)
 
     print("\nVideo loop ended.")
 
@@ -123,11 +208,198 @@ def enroll_mode(db: Database, detector: FaceDetector, embedder: FaceEmbedder):
         print("No images captured.")
 
 
+def db_info_mode(db: Database):
+    """Print a summary of everyone enrolled in the database."""
+    people = db.get_all_people()
+    if not people:
+        print("Database is empty — no people enrolled yet.")
+        return
+
+    print(f"\n{'─' * 55}")
+    print(f"  {'ID':<5} {'Name':<20} {'Embeddings':<12} {'Last Seen'}")
+    print(f"{'─' * 55}")
+    for p in people:
+        last_seen = p.last_seen.strftime("%Y-%m-%d %H:%M") if p.last_seen else "never"
+        print(f"  {p.person_id:<5} {p.name:<20} {len(p.embeddings):<12} {last_seen}")
+    print(f"{'─' * 55}")
+    print(f"  Total: {len(people)} person(s)\n")
+
+
+def db_delete_mode(db: Database):
+    """Interactively delete a person or wipe the entire database."""
+    people = db.get_all_people()
+    if not people:
+        print("Database is empty.")
+        return
+
+    db_info_mode(db)
+    print("Options:")
+    print("  Enter a person ID to delete that person")
+    print("  Enter 'all' to wipe the entire database")
+    print("  Enter 'cancel' to exit")
+
+    choice = input("\nChoice: ").strip().lower()
+
+    if choice == "cancel":
+        print("Cancelled.")
+        return
+
+    if choice == "all":
+        confirm = input(f"Delete ALL {len(people)} people? This cannot be undone. (yes/no): ").strip().lower()
+        if confirm == "yes":
+            for p in people:
+                db.delete_person(p.person_id)
+            print("Database wiped.")
+        else:
+            print("Cancelled.")
+        return
+
+    try:
+        person_id = int(choice)
+    except ValueError:
+        print(f"Invalid input: '{choice}'")
+        return
+
+    person = db.get_person(person_id)
+    if not person:
+        print(f"No person found with ID {person_id}.")
+        return
+
+    confirm = input(f"Delete '{person.name}' (ID {person_id})? (yes/no): ").strip().lower()
+    if confirm == "yes":
+        db.delete_person(person_id)
+        print(f"Deleted '{person.name}'.")
+    else:
+        print("Cancelled.")
+
+
+def _do_merge(db: Database, keep: Person, discard: Person):
+    """Move all embeddings from discard into keep, then delete discard."""
+    for emb in db.get_embeddings(discard.person_id):
+        db.add_embedding(keep.person_id, emb)
+    db.delete_person(discard.person_id)
+
+
+def merge_clusters_mode(db: Database):
+    """Find and interactively merge clusters that look like the same person."""
+    people = [p for p in db.get_all_people() if p.embeddings]
+
+    if len(people) < 2:
+        print("Need at least 2 clusters with embeddings.")
+        return
+
+    # Compute per-person mean embedding
+    def mean_vec(person: Person) -> np.ndarray:
+        return np.mean([e.vector for e in person.embeddings], axis=0)
+
+    means = {p.person_id: mean_vec(p) for p in people}
+
+    # Find all pairs above the merge threshold
+    suggestions = []
+    for i in range(len(people)):
+        va = means[people[i].person_id]
+        na = np.linalg.norm(va)
+        if na == 0:
+            continue
+        for j in range(i + 1, len(people)):
+            vb = means[people[j].person_id]
+            nb = np.linalg.norm(vb)
+            if nb == 0:
+                continue
+            sim = float(np.dot(va, vb) / (na * nb))
+            if sim >= MERGE_SIMILARITY_THRESHOLD:
+                suggestions.append((sim, people[i], people[j]))
+
+    suggestions.sort(reverse=True)
+
+    if not suggestions:
+        print(f"No cluster pairs found with similarity >= {MERGE_SIMILARITY_THRESHOLD}.")
+        return
+
+    print(f"Found {len(suggestions)} candidate merge(s). Higher = more likely the same person.\n")
+    merged_ids: set[int] = set()
+
+    for sim, pa, pb in suggestions:
+        if pa.person_id in merged_ids or pb.person_id in merged_ids:
+            continue
+
+        last_a = pa.last_seen.strftime("%Y-%m-%d %H:%M") if pa.last_seen else "never"
+        last_b = pb.last_seen.strftime("%Y-%m-%d %H:%M") if pb.last_seen else "never"
+        print(
+            f"[sim={sim:.2f}]  A: '{pa.name}' (ID {pa.person_id}, {len(pa.embeddings)} emb, seen {last_a})"
+            f"\n         B: '{pb.name}' (ID {pb.person_id}, {len(pb.embeddings)} emb, seen {last_b})"
+        )
+
+        choice = input("  Merge? (a=keep A name, b=keep B name, n=skip): ").strip().lower()
+        if choice == "a":
+            _do_merge(db, keep=pa, discard=pb)
+            merged_ids.add(pb.person_id)
+            print(f"  Merged B into A → '{pa.name}'")
+        elif choice == "b":
+            _do_merge(db, keep=pb, discard=pa)
+            merged_ids.add(pa.person_id)
+            print(f"  Merged A into B → '{pb.name}'")
+        else:
+            print("  Skipped.")
+
+    print("\nMerge complete.")
+
+
+def label_mode(db: Database):
+    """Interactively assign real names to auto-discovered clusters."""
+    people = db.get_all_people()
+    unlabeled = [p for p in people if not p.is_labeled]
+
+    if not unlabeled:
+        print("No unlabeled clusters found. Run in 'run' mode first to discover faces.")
+        return
+
+    print(f"\nFound {len(unlabeled)} unlabeled cluster(s).")
+    print("Commands: type a name to label, press Enter to skip, 'delete' to remove.\n")
+
+    for person in unlabeled:
+        last_seen = person.last_seen.strftime("%Y-%m-%d %H:%M") if person.last_seen else "never"
+        print(f"Cluster '{person.name}' | {len(person.embeddings)} embedding(s) | last seen: {last_seen}")
+
+        if person.thumbnail is not None:
+            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            cv2.imwrite(tmp.name, person.thumbnail)
+            tmp.close()
+            os.startfile(tmp.name)
+
+        name = input("  Name: ").strip()
+
+        if name.lower() == "delete":
+            db.delete_person(person.person_id)
+            print(f"  Deleted '{person.name}'.")
+        elif name:
+            existing = db.get_person_by_name(name)
+            if existing:
+                _do_merge(db, keep=existing, discard=person)
+                print(f"  Merged into existing '{name}'")
+            else:
+                db.update_person(person.person_id, name=name, is_labeled=True)
+                print(f"  '{person.name}' → '{name}'")
+        else:
+            print("  Skipped.")
+
+    print("\nLabeling complete.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="AR Glasses Prototype")
     parser.add_argument(
-        "--mode", choices=["run", "enroll"], default="run",
-        help="'run' for live recognition, 'enroll' to add a new person",
+        "--mode",
+        choices=["run", "enroll", "label", "merge", "db-info", "db-delete"],
+        default="run",
+        help=(
+            "'run' for live recognition (auto-clusters new faces) | "
+            "'label' to assign names to auto-discovered clusters | "
+            "'merge' to find and merge duplicate clusters | "
+            "'enroll' to manually add a named person | "
+            "'db-info' to list enrolled people | "
+            "'db-delete' to remove a person or wipe the database"
+        ),
     )
     parser.add_argument(
         "--camera", type=int, default=CAMERA_SOURCE,
@@ -135,7 +407,23 @@ def main():
     )
     args = parser.parse_args()
 
-    # Initialize shared components
+    # Modes that only need the database
+    if args.mode in ("db-info", "db-delete", "label", "merge"):
+        db = Database()
+        try:
+            if args.mode == "db-info":
+                db_info_mode(db)
+            elif args.mode == "db-delete":
+                db_delete_mode(db)
+            elif args.mode == "label":
+                label_mode(db)
+            else:
+                merge_clusters_mode(db)
+        finally:
+            db.close()
+        return
+
+    # Modes that need the full pipeline
     print("Initializing database...")
     db = Database()
     print("Initializing face detector (MediaPipe)...")
