@@ -23,17 +23,36 @@ import numpy as np
 from config import (
     CAMERA_SOURCE, DB_PATH,
     EMBEDDING_UPDATE_INTERVAL, MAX_EMBEDDINGS_PER_PERSON,
+    EMBEDDING_DIVERSITY_THRESHOLD, FACE_BLUR_THRESHOLD,
     MIN_SIGHTINGS_TO_CLUSTER, PENDING_CLUSTER_SIMILARITY, PENDING_EXPIRY_FRAMES,
     MERGE_SIMILARITY_THRESHOLD,
 )
-from models import IdentityMatch, Person
+from models import FaceEmbedding, IdentityMatch, Person
 from input.camera import Camera
 from processing.face_detector import FaceDetector
 from processing.face_embedder import FaceEmbedder
 from processing.face_matcher import FaceMatcher
+from processing.face_tracker import FaceTracker
 from storage.database import Database
 from storage.enrollment import Enrollment
 from output.display import Display
+
+
+def _is_diverse(
+    new_emb: FaceEmbedding,
+    existing: list[FaceEmbedding],
+    min_distance: float,
+) -> bool:
+    """Return True if new_emb is at least min_distance (cosine) from every
+    existing embedding.  Prevents storing near-duplicate embeddings (#8)."""
+    if not existing:
+        return True
+    new_n = new_emb.vector / (np.linalg.norm(new_emb.vector) + 1e-8)
+    for e in existing:
+        e_n = e.vector / (np.linalg.norm(e.vector) + 1e-8)
+        if float(np.dot(new_n, e_n)) >= 1.0 - min_distance:
+            return False
+    return True
 
 
 def _cv2_input(image: np.ndarray, prompt: str) -> str:
@@ -97,6 +116,8 @@ def run_video_loop(
     start_time = time.time()
     last_embedding_update: dict[int, int] = {}
 
+    tracker = FaceTracker()
+
     # Pending observations for faces not yet promoted to real clusters.
     # Each entry: {'embeddings': [...], 'thumbnail': np.ndarray, 'last_frame': int}
     pending: list[dict] = []
@@ -105,7 +126,7 @@ def run_video_loop(
         timestamp = time.time()
         faces = detector.detect(frame, timestamp=timestamp)
 
-        matches = []
+        raw_matches = []
         gallery_dirty = False
 
         # Expire stale pending entries
@@ -117,10 +138,17 @@ def run_video_loop(
 
             if match.is_known:
                 db.update_last_seen(match.person_id)
+
+                # Accumulate a new embedding if the frame is sharp and diverse (#8)
                 frames_since = frame_count - last_embedding_update.get(match.person_id, 0)
                 if frames_since >= EMBEDDING_UPDATE_INTERVAL:
                     person = db.get_person(match.person_id)
-                    if person and len(person.embeddings) < MAX_EMBEDDINGS_PER_PERSON:
+                    if (
+                        person
+                        and len(person.embeddings) < MAX_EMBEDDINGS_PER_PERSON
+                        and face.blur_score >= FACE_BLUR_THRESHOLD
+                        and _is_diverse(embedding, person.embeddings, EMBEDDING_DIVERSITY_THRESHOLD)
+                    ):
                         db.add_embedding(match.person_id, embedding)
                         gallery_dirty = True
                     last_embedding_update[match.person_id] = frame_count
@@ -168,10 +196,13 @@ def run_video_loop(
                         "last_frame": frame_count,
                     })
 
-            matches.append(match)
+            raw_matches.append(match)
 
         if gallery_dirty:
             matcher.update_gallery(db.get_all_people())
+
+        # Smooth identity predictions across frames (#9)
+        matches = tracker.update(faces, raw_matches, frame_count)
 
         display.draw(frame, faces, matches)
         if not display.show(frame):

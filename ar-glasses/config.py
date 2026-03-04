@@ -23,17 +23,26 @@ MATCH_THRESHOLD = 0.4   # cosine similarity threshold for same person
 UNKNOWN_LABEL = "Unknown"
 
 # Unsupervised clustering
-EMBEDDING_UPDATE_INTERVAL = 60   # frames between accumulating new embeddings for a recognized person
-MAX_EMBEDDINGS_PER_PERSON = 20   # cap to prevent unbounded growth per person
-MIN_SIGHTINGS_TO_CLUSTER = 8     # consecutive observations needed before promoting to a real cluster
-PENDING_CLUSTER_SIMILARITY = 0.25  # cosine similarity threshold for grouping pending observations
-PENDING_EXPIRY_FRAMES = 90       # frames of absence before a pending observation is discarded
-MERGE_SIMILARITY_THRESHOLD = 0.35  # similarity above which two clusters are suggested for merging
+EMBEDDING_UPDATE_INTERVAL = 60        # frames between accumulating new embeddings for a recognized person
+MAX_EMBEDDINGS_PER_PERSON = 20        # cap to prevent unbounded growth per person
+EMBEDDING_DIVERSITY_THRESHOLD = 0.15  # min cosine distance required to store a new embedding (#8)
+MIN_SIGHTINGS_TO_CLUSTER = 8          # observations needed before promoting to a real cluster
+PENDING_CLUSTER_SIMILARITY = 0.25     # cosine similarity for grouping pending observations
+PENDING_EXPIRY_FRAMES = 90            # frames of absence before discarding a pending observation
+MERGE_SIMILARITY_THRESHOLD = 0.35     # similarity above which two clusters are suggested for merging
+
+# Face quality (#1, #2)
+FACE_MIN_SIZE = 60        # px — ignore detections smaller than this (width or height)
+FACE_BLUR_THRESHOLD = 60.0  # Laplacian variance — skip accumulating embeddings below this
+
+# Temporal smoothing (#9)
+TEMPORAL_SMOOTHING_FRAMES = 7   # identity history window length for majority-vote smoothing
+FACE_MAX_MOVE_PX = 100          # max bounding-box centre movement (px) to count as same face
 
 # Camera
 CAMERA_SOURCE = 0       # default webcam
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
 CAMERA_FPS = 30
 
 # Microphone
