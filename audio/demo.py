@@ -3,10 +3,10 @@ import gc
 
 # 1. Configuration
 device = "cpu" # Use "cuda" for GPU, or "cpu" if you don't have one
-audio_file = "" # Path to your audio file
+audio_file = "output.wav" # Path to your audio file
 batch_size = 16 # Reduce this if your GPU runs out of memory
-compute_type = "int8" # Use "int8" if you have low GPU memory, or "float32" for CPU
-huggingface_token = ""
+compute_type = "float32" # Use "int8" if you have low GPU memory, or "float32" for CPU
+huggingface_token = "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"
 
 print("Loading audio...")
 audio = whisperx.load_audio(audio_file)
