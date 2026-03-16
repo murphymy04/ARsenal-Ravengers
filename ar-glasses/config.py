@@ -32,8 +32,23 @@ PENDING_EXPIRY_FRAMES = 90            # frames of absence before discarding a pe
 MERGE_SIMILARITY_THRESHOLD = 0.35     # similarity above which two clusters are suggested for merging
 
 # Face quality (#1, #2)
-FACE_MIN_SIZE = 60        # px — ignore detections smaller than this (width or height)
+FACE_MIN_SIZE = 60          # px — ignore detections smaller than this (width or height)
 FACE_BLUR_THRESHOLD = 60.0  # Laplacian variance — skip accumulating embeddings below this
+
+# Speaking detection backend
+# Set SPEAKING_BACKEND = "light_asd" to use Light-ASD (audio-visual, more accurate).
+# Set SPEAKING_BACKEND = "mediapipe" to use the MediaPipe jawOpen blendshape (visual-only).
+SPEAKING_BACKEND = "light_asd"
+
+# MediaPipe FaceLandmarker jawOpen blendshape (used when SPEAKING_BACKEND = "mediapipe")
+SPEAKING_JAW_THRESHOLD = 0.005  # jawOpen score above which the person is considered speaking
+
+# Light-ASD (used when SPEAKING_BACKEND = "light_asd")
+LIGHT_ASD_WEIGHTS = DATA_DIR / "light_asd.model"  # downloaded automatically on first run
+LIGHT_ASD_VIDEO_FRAMES = 30          # rolling window of face crops per inference (≈1 s at 30 FPS)
+LIGHT_ASD_MIN_FRAMES = 10            # minimum buffered frames before running inference
+LIGHT_ASD_INFERENCE_INTERVAL = 5     # run inference every N video frames
+LIGHT_ASD_SPEAKING_THRESHOLD = 0.5   # softmax probability above which = speaking
 
 # Temporal smoothing (#9)
 TEMPORAL_SMOOTHING_FRAMES = 7   # identity history window length for majority-vote smoothing

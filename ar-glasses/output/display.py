@@ -14,6 +14,8 @@ from config import (
     FONT_SCALE, FONT_THICKNESS,
 )
 
+_SPEAKING_COLOR = (0, 220, 255)  # yellow-ish — distinct from green/red bbox colors
+
 
 class Display:
     """Renders face recognition overlays on video frames."""
@@ -41,14 +43,23 @@ class Display:
             bbox = face.bbox
             color = BBOX_COLOR if match.is_known else UNKNOWN_BBOX_COLOR
 
-            # Bounding box
+            # Bounding box — thicker + speaking-colour outline when talking
             cv2.rectangle(frame, (bbox.x1, bbox.y1), (bbox.x2, bbox.y2), color, 2)
+            if face.is_speaking:
+                cv2.rectangle(
+                    frame,
+                    (bbox.x1 - 3, bbox.y1 - 3),
+                    (bbox.x2 + 3, bbox.y2 + 3),
+                    _SPEAKING_COLOR, 2,
+                )
 
-            # Label: "Name (0.85)" or "Unknown"
+            # Label: "Name (0.85)" or "Unknown", with speaking dot prefix
             if match.is_known:
                 label = f"{match.name} ({match.confidence:.2f})"
             else:
                 label = "Unknown"
+            if face.is_speaking:
+                label = "* " + label
 
             # Background rectangle for text readability
             (tw, th), _ = cv2.getTextSize(
@@ -66,6 +77,13 @@ class Display:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 FONT_SCALE, TEXT_COLOR, FONT_THICKNESS,
             )
+
+            # Speaking indicator dot in the top-right corner of the bbox
+            if face.is_speaking:
+                dot_x = bbox.x2 - 10
+                dot_y = bbox.y1 + 10
+                cv2.circle(frame, (dot_x, dot_y), 7, _SPEAKING_COLOR, -1)
+                cv2.circle(frame, (dot_x, dot_y), 7, (0, 0, 0), 1)  # outline
 
         return frame
 
