@@ -1,12 +1,12 @@
 """Transcription pipeline: Groq Whisper API.
 
-Extracts audio from a video file and sends it to Groq's hosted Whisper model
-for transcription. Returns a list of TranscriptSegment with timestamps.
+Takes raw wav bytes and sends them to Groq's hosted Whisper model for
+transcription. Returns a list of TranscriptSegment with timestamps.
 
-The output of this step will be combined with the diarization step to get the full conversation.
+Stateless with respect to I/O: the driver is responsible for extracting
+audio from the source.
 """
 
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -22,16 +22,20 @@ load_dotenv(_AR_ROOT / ".env")
 
 from models import TranscriptSegment
 
+
 class TranscriptionPipeline:
     def __init__(self):
         self._client = Groq()
 
-    def run(self, video_path: Path) -> list[TranscriptSegment]:
-        audio_path = _extract_audio(video_path)
+    def run(self, audio: bytes) -> list[TranscriptSegment]:
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp_path = Path(tmp.name)
         try:
-            with open(audio_path, "rb") as f:
+            tmp.write(audio)
+            tmp.close()
+            with open(tmp_path, "rb") as f:
                 response = self._client.audio.transcriptions.create(
-                    file=(audio_path.name, f),
+                    file=(tmp_path.name, f),
                     model="whisper-large-v3",
                     response_format="verbose_json",
                 )
@@ -44,34 +48,13 @@ class TranscriptionPipeline:
                 for seg in response.segments
             ]
         finally:
-            audio_path.unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
 
-def _extract_audio(video_path: Path) -> Path:
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    tmp.close()
-    cmd = [
-        "ffmpeg", "-i", str(video_path),
-        "-vn", "-ac", "1", "-ar", "16000",
-        "-y", "-loglevel", "error",
-        tmp.name,
-    ]
-    subprocess.run(cmd, check=True)
-    return Path(tmp.name)
+    @staticmethod
+    def test(segments: list[TranscriptSegment]):
+        print(f"\n{'='*60}")
+        print(f"Transcript: {len(segments)} segments")
+        print(f"{'='*60}")
 
-
-if __name__ == "__main__":
-    VIDEO_PATH = _AR_ROOT.parent / "test_movie.mp4"
-
-    if not VIDEO_PATH.exists():
-        print(f"Test video not found: {VIDEO_PATH}")
-        sys.exit(1)
-
-    pipeline = TranscriptionPipeline()
-    segments = pipeline.run(VIDEO_PATH)
-
-    print(f"\n{'='*60}")
-    print(f"Transcript: {len(segments)} segments")
-    print(f"{'='*60}")
-
-    for seg in segments:
-        print(f"  [{seg.start_time:7.2f}s - {seg.end_time:7.2f}s]  {seg.text}")
+        for seg in segments:
+            print(f"  [{seg.start_time:7.2f}s - {seg.end_time:7.2f}s]  {seg.text}")
