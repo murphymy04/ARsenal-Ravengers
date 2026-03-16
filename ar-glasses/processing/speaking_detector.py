@@ -53,7 +53,7 @@ from config import (
 class SpeakingDetector:
     """Audio-visual active speaker detection, updating is_speaking per track."""
 
-    def __init__(self, device: str = "cpu"):
+    def __init__(self, device: str = "cpu", use_mic: bool = True):
         # Lazy import so the rest of the system works even if torch is absent
         from processing.light_asd.model import ASDInference
         self._model = ASDInference.load(Path(LIGHT_ASD_WEIGHTS), device=device)
@@ -76,17 +76,31 @@ class SpeakingDetector:
         # Latest speaking prediction per track
         self._speaking: dict[int, bool] = {}
 
-        # Start microphone capture (daemon — dies with the main process)
         self._running = True
         self._mic_ok = False
-        self._mic_thread = threading.Thread(target=self._mic_loop, daemon=True)
-        self._mic_thread.start()
-        # Wait briefly so we know if mic init succeeded
-        time.sleep(0.3)
+
+        if use_mic:
+            # Start microphone capture (daemon — dies with the main process)
+            self._mic_thread = threading.Thread(target=self._mic_loop, daemon=True)
+            self._mic_thread.start()
+            # Wait briefly so we know if mic init succeeded
+            time.sleep(0.3)
+        else:
+            self._mic_thread = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def feed_audio(self, samples: np.ndarray):
+        """Write pre-loaded audio samples into the buffer (bypasses mic).
+
+        Args:
+            samples: float32 mono audio at SAMPLE_RATE Hz.
+        """
+        with self._audio_lock:
+            self._audio_buf.extend(samples)
+        self._mic_ok = True
 
     def add_crop(self, track_id: int, crop_rgb: np.ndarray):
         """Buffer a 112×112 RGB face crop for this track."""
