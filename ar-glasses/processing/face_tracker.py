@@ -6,7 +6,7 @@ and returns the majority-vote identity for each face — eliminating the
 per-frame flicker caused by occasional mismatches.
 """
 
-from collections import Counter
+from collections import Counter, deque
 from typing import List
 
 import numpy as np
@@ -34,7 +34,7 @@ class FaceTracker:
     ):
         self._window = window
         self._max_move = max_move_px
-        # track_id -> {'cx', 'cy', 'history': list[IdentityMatch], 'last_frame': int}
+        # track_id -> {'cx', 'cy', 'history': deque[IdentityMatch], 'last_frame': int}
         self._tracks: dict[int, dict] = {}
         self._next_id = 0
 
@@ -43,7 +43,7 @@ class FaceTracker:
         faces: List[DetectedFace],
         raw_matches: List[IdentityMatch],
         frame_count: int,
-    ) -> List[IdentityMatch]:
+    ) -> tuple[List[IdentityMatch], List[int]]:
         """Update tracks with this frame's detections and return smoothed matches.
 
         Args:
@@ -52,11 +52,12 @@ class FaceTracker:
             frame_count: current frame index (used for track expiry).
 
         Returns:
-            Smoothed IdentityMatch list in the same order as faces.
+            Tuple of (smoothed IdentityMatch list, track_id list) — same order as faces.
         """
         assigned: set[int] = set()
         active_tracks: dict[int, dict] = {}
         smoothed: List[IdentityMatch] = []
+        track_ids: List[int] = []
 
         for face, match in zip(faces, raw_matches):
             cx, cy = face.bbox.center
@@ -71,26 +72,26 @@ class FaceTracker:
                     best_dist, best_id = dist, tid
 
             if best_id is not None and best_dist <= self._max_move:
-                # Update existing track
+                # Update existing track — deque handles the window limit automatically
                 track = self._tracks[best_id]
                 track["history"].append(match)
-                if len(track["history"]) > self._window:
-                    track["history"].pop(0)
                 track["cx"], track["cy"] = cx, cy
                 track["last_frame"] = frame_count
                 assigned.add(best_id)
                 active_tracks[best_id] = track
+                track_ids.append(best_id)
             else:
                 # Start a new track
                 tid = self._next_id
                 self._next_id += 1
                 track = {
                     "cx": cx, "cy": cy,
-                    "history": [match],
+                    "history": deque([match], maxlen=self._window),
                     "last_frame": frame_count,
                 }
                 assigned.add(tid)
                 active_tracks[tid] = track
+                track_ids.append(tid)
 
             smoothed.append(_majority_vote(track["history"]))
 
@@ -100,7 +101,7 @@ class FaceTracker:
             if frame_count - t["last_frame"] <= self._EXPIRY_FRAMES
         }
 
-        return smoothed
+        return smoothed, track_ids
 
 
 def _majority_vote(history: list[IdentityMatch]) -> IdentityMatch:

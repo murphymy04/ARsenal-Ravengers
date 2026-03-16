@@ -35,7 +35,8 @@ class DetectedFace:
     crop: np.ndarray        # 112x112 RGB uint8
     frame_index: int
     timestamp: float
-    blur_score: float = 0.0  # Laplacian variance — higher is sharper
+    blur_score: float = 0.0   # Laplacian variance — higher is sharper
+    is_speaking: bool = False  # True when jawOpen blendshape exceeds threshold
 
 
 @dataclass
