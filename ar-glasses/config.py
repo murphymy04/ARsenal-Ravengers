@@ -58,7 +58,7 @@ FACE_MAX_MOVE_PX = 100          # max bounding-box centre movement (px) to count
 CAMERA_SOURCE = 0       # default webcam
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
-CAMERA_FPS = 30
+CAMERA_FPS = 30 # this is the actual framerate i am getting on my mac
 
 # Microphone
 SAMPLE_RATE = 16000
