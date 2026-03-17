@@ -16,6 +16,9 @@ python_speech_features>=0.6
 groq
 python-dotenv
 
+# MFCC for speaker detection
+librosa
+
 # Phase 2 - Audio pipeline (uncomment when needed)
 # pyaudio>=0.2.14
 # webrtcvad>=2.0.10
