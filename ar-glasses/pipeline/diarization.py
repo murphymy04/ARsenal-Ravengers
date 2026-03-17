@@ -38,7 +38,7 @@ class DiarizationPipeline:
     ) -> list[dict]:
         detector = FaceDetector()
         tracker = FaceTracker()
-        speaker = SpeakingDetector(use_mic=False)
+        speaker = SpeakingDetector(use_mic=False, fps=fps)
         log = SpeakingLog()
 
         speaker.feed_audio(audio)
@@ -51,11 +51,10 @@ class DiarizationPipeline:
                 raw_matches = [self._identity.identify(face, frame_idx) for face in faces]
                 smoothed, track_ids = tracker.update(faces, raw_matches, frame_idx)
 
-                active_ids = set(track_ids)
                 for face, tid in zip(faces, track_ids):
                     speaker.add_crop(tid, face.crop)
 
-                speaker.run_inference(frame_idx, active_track_ids=active_ids)
+                speaker.run_inference(frame_idx, timestamp=timestamp)
 
                 for face, match, tid in zip(faces, smoothed, track_ids):
                     is_speaking = speaker.get_speaking(tid)
@@ -71,7 +70,36 @@ class DiarizationPipeline:
             detector.close()
 
         log.close(timestamp=len(frames) / fps)
-        return log.get_segments()
+        return self._merge_close_segments(log.get_segments())
+
+    @staticmethod
+    def _merge_close_segments(
+        segments: list[dict], max_gap: float = 2.0
+    ) -> list[dict]:
+        if not segments:
+            return segments
+
+        by_track: dict[int, list[dict]] = {}
+        for seg in segments:
+            by_track.setdefault(seg["track_id"], []).append(seg)
+
+        merged: list[dict] = []
+        for segs in by_track.values():
+            segs.sort(key=lambda s: s["start"])
+            current = dict(segs[0])
+            for nxt in segs[1:]:
+                if nxt["start"] - current["end"] < max_gap:
+                    current["end"] = nxt["end"]
+                    if nxt.get("person_id") is not None:
+                        current["person_id"] = nxt["person_id"]
+                        current["name"] = nxt["name"]
+                else:
+                    merged.append(current)
+                    current = dict(nxt)
+            merged.append(current)
+
+        merged.sort(key=lambda s: s["start"])
+        return merged
 
     @staticmethod
     def test(segments: list[dict]):

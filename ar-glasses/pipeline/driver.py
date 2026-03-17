@@ -97,7 +97,7 @@ def combine_segments(
 ) -> list[dict]:
     result = []
     for seg in transcript_segments:
-        best_name, best_overlap = "wearer", 0.0
+        best_name, best_overlap = "wearer", 1.5
         for sp in diarization_segments:
             overlap = min(seg.end_time, sp["end"]) - max(seg.start_time, sp["start"])
             if overlap > best_overlap:
