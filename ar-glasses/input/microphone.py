@@ -12,7 +12,6 @@ import sounddevice as sd
 
 from config import SAMPLE_RATE
 
-
 class Microphone:
     def __init__(self, sample_rate: int = SAMPLE_RATE):
         self.sample_rate = sample_rate
