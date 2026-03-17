@@ -11,7 +11,7 @@ import wave
 
 import numpy as np
 
-from config import CAMERA_FPS, LIVE_BUFFER_SECONDS, SAMPLE_RATE
+from config import CAMERA_FPS, LIVE_BUFFER_SECONDS, SAMPLE_RATE, SAVE_TO_MEMORY
 from input.camera import Camera
 from input.microphone import Microphone
 from models import IdentityModule
@@ -36,6 +36,7 @@ class LivePipelineDriver:
     def __init__(self, identity: IdentityModule, transcription: TranscriptionPipeline):
         self._identity = identity
         self._transcription = transcription
+        self._save_to_memory = SAVE_TO_MEMORY
 
     def run(self, camera: Camera) -> None:
         detector = FaceDetector()
@@ -106,6 +107,10 @@ class LivePipelineDriver:
             seg.end_time += window_start
 
         combined = combine_segments(diarization_segments, transcript_segments)
+
+        if self._save_to_memory and combined:
+            from pipeline.knowledge import save_to_memory
+            save_to_memory(combined)
 
         print(f"\n{'='*60}")
         print(f"[{window_start:.1f}s - {window_end:.1f}s] {len(combined)} segments")

@@ -1,28 +1,23 @@
-# Core dependencies (already installed)
+# Core
 torch>=2.0
 torchvision>=0.15
-opencv-python>=4.8
 numpy>=1.24
-scikit-learn>=1.3
-timm>=0.9
+opencv-python>=4.8
 
 # Face detection
 mediapipe>=0.10.20
 
-# Speech features
+# Face embedding (EdgeFace backbone)
+timm>=0.9
+
+# Speaking detection (Light-ASD)
 python_speech_features>=0.6
+librosa
+sounddevice
 
 # Transcription (Groq Whisper API)
 groq
 python-dotenv
 
-# MFCC for speaker detection
-librosa
-
-# Phase 2 - Audio pipeline (uncomment when needed)
-# pyaudio>=0.2.14
-# webrtcvad>=2.0.10
-# whisperx @ git+https://github.com/m-bain/whisperX.git
-
-# Phase 2 - Companion app (uncomment when needed)
-# flask>=3.0
+# Knowledge graph
+graphiti-core
