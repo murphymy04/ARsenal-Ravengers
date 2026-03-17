@@ -169,6 +169,7 @@ class FaceDetector:
 
         # --- Speaking detection (FaceLandmarker) ---
         # Skipped when Light-ASD is active; Light-ASD sets is_speaking externally.
+        # How does this get skipped? the speaking backend is a constant.
         if faces and SPEAKING_BACKEND == "mediapipe":
             self._update_speaking(mp_image, faces, w, h)
 
