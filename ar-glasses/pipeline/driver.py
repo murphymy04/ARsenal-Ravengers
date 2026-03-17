@@ -94,15 +94,24 @@ class PipelineDriver:
 def combine_segments(
     diarization_segments: list[dict],
     transcript_segments: list[TranscriptSegment],
+    min_coverage: float = 0.3,
 ) -> list[dict]:
     result = []
     for seg in transcript_segments:
-        best_name, best_overlap = "wearer", 1.5
+        best_name, best_coverage = "wearer", 0.0
         for sp in diarization_segments:
             overlap = min(seg.end_time, sp["end"]) - max(seg.start_time, sp["start"])
-            if overlap > best_overlap:
-                best_overlap = overlap
+            if overlap <= 0:
+                continue
+            sp_duration = sp["end"] - sp["start"]
+            if sp_duration <= 0:
+                continue
+            coverage = overlap / sp_duration
+            if coverage > best_coverage:
+                best_coverage = coverage
                 best_name = sp["name"]
+        if best_coverage < min_coverage:
+            best_name = "wearer"
         result.append({
             "speaker": best_name,
             "text": seg.text,
