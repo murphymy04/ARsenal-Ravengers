@@ -281,10 +281,11 @@ def main():
     parser = argparse.ArgumentParser(description="AR Glasses Prototype")
     parser.add_argument(
         "--mode",
-        choices=["run", "enroll", "label", "merge", "db-info", "db-delete"],
+        choices=["run", "live", "enroll", "label", "merge", "db-info", "db-delete"],
         default="run",
         help=(
             "run: live recognition (default) | "
+            "live: streaming diarization + transcription | "
             "label: name auto-discovered clusters | "
             "merge: consolidate duplicate clusters | "
             "enroll: manually add a named person | "
@@ -328,6 +329,22 @@ def main():
         if args.mode == "enroll":
             from commands.enroll import enroll_mode
             enroll_mode(db, detector, embedder)
+        elif args.mode == "live":
+            from pipeline.live import LivePipelineDriver
+            from pipeline.identity import FullIdentity
+            from pipeline.transcription import TranscriptionPipeline
+
+            if args.camera == "android":
+                from input.android_camera import AndroidCamera
+                camera = AndroidCamera()
+            else:
+                camera = Camera(source=args.camera)
+            try:
+                identity = FullIdentity(embedder, matcher, db)
+                driver = LivePipelineDriver(identity, TranscriptionPipeline())
+                driver.run(camera)
+            finally:
+                camera.close()
         else:
             if args.camera == "android":
                 from input.android_camera import AndroidCamera

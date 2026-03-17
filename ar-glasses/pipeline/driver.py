@@ -24,7 +24,6 @@ from pipeline.transcription import TranscriptionPipeline
 
 _DIARIZATION_CACHE = _AR_ROOT / "data" / "diarization_cache.json"
 
-
 def _extract_frames(video_path: Path) -> tuple[list[np.ndarray], float]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -94,19 +93,25 @@ class PipelineDriver:
 def combine_segments(
     diarization_segments: list[dict],
     transcript_segments: list[TranscriptSegment],
-    min_coverage: float = 0.3,
+    min_coverage: float = 0.4,
 ) -> list[dict]:
     result = []
     for seg in transcript_segments:
         best_name, best_coverage = "wearer", 0.0
+        seg_duration = seg.end_time - seg.start_time
+        if seg_duration <= 0:
+            result.append({
+                "speaker": "wearer",
+                "text": seg.text,
+                "start": seg.start_time,
+                "end": seg.end_time,
+            })
+            continue
         for sp in diarization_segments:
             overlap = min(seg.end_time, sp["end"]) - max(seg.start_time, sp["start"])
             if overlap <= 0:
                 continue
-            sp_duration = sp["end"] - sp["start"]
-            if sp_duration <= 0:
-                continue
-            coverage = overlap / sp_duration
+            coverage = overlap / seg_duration
             if coverage > best_coverage:
                 best_coverage = coverage
                 best_name = sp["name"]
