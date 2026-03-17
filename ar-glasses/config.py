@@ -70,6 +70,9 @@ WHISPER_MODEL = "small"
 WHISPER_LANGUAGE = "en"
 SILENCE_THRESHOLD = 2.0  # seconds of silence before processing
 
+# Live pipeline
+LIVE_BUFFER_SECONDS = 10  # process audio/video in N-second windows
+
 # Display
 BBOX_COLOR = (0, 255, 0)       # green
 UNKNOWN_BBOX_COLOR = (0, 0, 255)  # red
