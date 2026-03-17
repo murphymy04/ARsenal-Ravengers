@@ -72,15 +72,18 @@ class PipelineDriver:
         self._transcription = transcription
 
     def run(self, video_path: Path) -> tuple[list[dict], list[TranscriptSegment]]:
-        if _DIARIZATION_CACHE.exists():
+        if _DIARIZATION_CACHE.exists(): # Added this because the video takes ~40s to process and I didn't want to wait
             print(f"Loading diarization from cache: {_DIARIZATION_CACHE}")
+            
             with open(_DIARIZATION_CACHE) as f:
                 diarization_segments = json.load(f)
         else:
             frames, fps = _extract_frames(video_path)
             audio_pcm = _extract_audio_pcm(video_path)
+            
             diarization_segments = self._diarization.run(frames, fps, audio_pcm)
             _DIARIZATION_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            
             with open(_DIARIZATION_CACHE, "w") as f:
                 json.dump(diarization_segments, f, indent=2)
 
@@ -97,32 +100,31 @@ def combine_segments(
 ) -> list[dict]:
     result = []
     for seg in transcript_segments:
+
         best_name, best_coverage = "wearer", 0.0
         seg_duration = seg.end_time - seg.start_time
-        if seg_duration <= 0:
-            result.append({
-                "speaker": "wearer",
-                "text": seg.text,
-                "start": seg.start_time,
-                "end": seg.end_time,
-            })
-            continue
+
         for sp in diarization_segments:
             overlap = min(seg.end_time, sp["end"]) - max(seg.start_time, sp["start"])
+            
             if overlap <= 0:
                 continue
+            
             coverage = overlap / seg_duration
             if coverage > best_coverage:
                 best_coverage = coverage
                 best_name = sp["name"]
+        
         if best_coverage < min_coverage:
             best_name = "wearer"
+        
         result.append({
             "speaker": best_name,
             "text": seg.text,
             "start": seg.start_time,
             "end": seg.end_time,
         })
+    
     return result
 
 if __name__ == "__main__":
@@ -158,3 +160,8 @@ if __name__ == "__main__":
     print(f"{'='*60}")
     for seg in combined:
         print(f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}")
+
+    from config import SAVE_TO_MEMORY
+    if SAVE_TO_MEMORY:
+        from pipeline.knowledge import save_to_memory
+        save_to_memory(combined)
