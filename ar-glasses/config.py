@@ -58,7 +58,7 @@ FACE_MAX_MOVE_PX = 100          # max bounding-box centre movement (px) to count
 CAMERA_SOURCE = 0       # default webcam
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
-CAMERA_FPS = 30
+CAMERA_FPS = 30      # this is the actual framerate i am getting on my mac
 
 # Microphone
 SAMPLE_RATE = 16000
@@ -70,6 +70,9 @@ WHISPER_MODEL = "small"
 WHISPER_LANGUAGE = "en"
 SILENCE_THRESHOLD = 2.0  # seconds of silence before processing
 
+# Live pipeline
+LIVE_BUFFER_SECONDS = 10  # process audio/video in N-second windows
+
 # Display
 BBOX_COLOR = (0, 255, 0)       # green
 UNKNOWN_BBOX_COLOR = (0, 0, 255)  # red
@@ -80,6 +83,12 @@ FONT_THICKNESS = 2
 # Companion app
 FLASK_HOST = "0.0.0.0"
 FLASK_PORT = 5000
+
+# Knowledge graph (Zep Graphiti → Neo4j)
+SAVE_TO_MEMORY = os.getenv("SAVE_TO_MEMORY", "false").lower() == "true"
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
 
 # Ensure data directory exists
 DATA_DIR.mkdir(exist_ok=True)

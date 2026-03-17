@@ -1,38 +1,51 @@
-"""Microphone input using PyAudio.
+"""Microphone input using sounddevice.
 
-Captures audio chunks for speech processing.
-Stubbed for Phase 2 implementation.
+Captures audio in a background thread for speech processing.
+Call open() to start recording, get_buffer_and_clear() to drain
+accumulated samples, and close() to stop.
 """
 
+import threading
+
 import numpy as np
-from typing import Generator
+import sounddevice as sd
 
-from config import SAMPLE_RATE, CHUNK_DURATION
-
+from config import SAMPLE_RATE
 
 class Microphone:
-    """PyAudio microphone wrapper (stub - Phase 2)."""
-
-    def __init__(self, sample_rate: int = SAMPLE_RATE, chunk_duration: float = CHUNK_DURATION):
+    def __init__(self, sample_rate: int = SAMPLE_RATE):
         self.sample_rate = sample_rate
-        self.chunk_duration = chunk_duration
-        self.chunk_size = int(sample_rate * chunk_duration)
+        self._lock = threading.Lock()
+        self._chunks: list[np.ndarray] = []
+        self._stream: sd.InputStream | None = None
 
     def open(self):
-        """Open the microphone stream."""
-        raise NotImplementedError("Microphone capture is Phase 2 - requires PyAudio")
+        self._stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype="float32",
+            blocksize=512,
+            callback=self._callback,
+        )
+        self._stream.start()
 
-    def read_chunk(self) -> np.ndarray:
-        """Read a single chunk of float32 audio."""
-        raise NotImplementedError("Microphone capture is Phase 2 - requires PyAudio")
+    def _callback(self, indata, frames, time_info, status):
+        with self._lock:
+            self._chunks.append(indata[:, 0].copy())
 
-    def stream(self) -> Generator[np.ndarray, None, None]:
-        """Yield float32 audio chunks continuously."""
-        raise NotImplementedError("Microphone capture is Phase 2 - requires PyAudio")
+    def get_buffer_and_clear(self) -> np.ndarray:
+        with self._lock:
+            if not self._chunks:
+                return np.array([], dtype=np.float32)
+            buf = np.concatenate(self._chunks)
+            self._chunks.clear()
+            return buf
 
     def close(self):
-        """Close the microphone stream."""
-        pass
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
 
     def __enter__(self):
         self.open()

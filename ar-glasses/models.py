@@ -1,7 +1,7 @@
 """Shared data models for the AR glasses prototype."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Protocol, runtime_checkable
 import numpy as np
 from datetime import datetime
 
@@ -66,6 +66,12 @@ class Person:
     is_labeled: bool = True   # False = auto-discovered cluster awaiting a real name
     created_at: Optional[datetime] = None
     last_seen: Optional[datetime] = None
+
+
+@runtime_checkable
+class IdentityModule(Protocol):
+    """Pluggable identity backend for the diarization pipeline."""
+    def identify(self, face: "DetectedFace", frame_count: int) -> "IdentityMatch": ...
 
 
 @dataclass
