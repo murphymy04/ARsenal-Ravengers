@@ -44,3 +44,7 @@ Thumbs.db
 # dotenv
 .env
 .env.*
+
+# datasets
+egocom
+download_egocom.sh

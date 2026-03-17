@@ -7,21 +7,15 @@ Stateless with respect to I/O: the driver is responsible for extracting
 audio from the source.
 """
 
-import sys
 import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
 from groq import Groq
 
-_AR_ROOT = Path(__file__).resolve().parent.parent
-if str(_AR_ROOT) not in sys.path:
-    sys.path.insert(0, str(_AR_ROOT))
-
-load_dotenv(_AR_ROOT / ".env")
+load_dotenv("../.env")
 
 from models import TranscriptSegment
-
 
 class TranscriptionPipeline:
     def __init__(self):

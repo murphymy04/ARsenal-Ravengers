@@ -22,7 +22,6 @@ from processing.face_tracker import FaceTracker
 from processing.speaking_detector import SpeakingDetector
 from storage.speaking_log import SpeakingLog
 
-
 def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
     pcm16 = (samples * 32767).clip(-32768, 32767).astype(np.int16)
     buf = io.BytesIO()
@@ -32,7 +31,6 @@ def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
         wf.setframerate(sample_rate)
         wf.writeframes(pcm16.tobytes())
     return buf.getvalue()
-
 
 class LivePipelineDriver:
     def __init__(self, identity: IdentityModule, transcription: TranscriptionPipeline):
