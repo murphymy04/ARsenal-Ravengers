@@ -94,7 +94,10 @@ class Display:
 
     def close(self):
         """Destroy the display window."""
-        cv2.destroyWindow(self.window_name)
+        try:
+            cv2.destroyWindow(self.window_name)
+        except cv2.error:
+            pass
 
     def __enter__(self):
         return self

@@ -11,7 +11,7 @@ EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
 EDGEFACE_CHECKPOINT = EDGEFACE_ROOT / "checkpoints" / "edgeface_base.pt"
 
 # Face detection (MediaPipe BlazeFace)
-DETECTION_CONFIDENCE = 0.5
+DETECTION_CONFIDENCE = 0.35
 FACE_CROP_SIZE = 112  # EdgeFace expects 112x112
 
 # Face embedding
@@ -32,8 +32,8 @@ PENDING_EXPIRY_FRAMES = 90            # frames of absence before discarding a pe
 MERGE_SIMILARITY_THRESHOLD = 0.35     # similarity above which two clusters are suggested for merging
 
 # Face quality (#1, #2)
-FACE_MIN_SIZE = 60          # px — ignore detections smaller than this (width or height)
-FACE_BLUR_THRESHOLD = 60.0  # Laplacian variance — skip accumulating embeddings below this
+FACE_MIN_SIZE = 20          # px — ignore detections smaller than this (width or height)
+FACE_BLUR_THRESHOLD = 15.0  # Laplacian variance — lower for H.264 compressed video
 
 # Speaking detection backend
 # Set SPEAKING_BACKEND = "light_asd" to use Light-ASD (audio-visual, more accurate).
@@ -56,9 +56,10 @@ FACE_MAX_MOVE_PX = 100          # max bounding-box centre movement (px) to count
 
 # Camera
 CAMERA_SOURCE = 0       # default webcam
-CAMERA_WIDTH = 1280
-CAMERA_HEIGHT = 720
+CAMERA_WIDTH = 1536
+CAMERA_HEIGHT = 2048
 CAMERA_FPS = 30      # this is the actual framerate i am getting on my mac
+ANDROID_CAMERA_FPS = 10   # Android camera streaming target fps
 
 # Microphone
 SAMPLE_RATE = 16000
