@@ -13,8 +13,9 @@ import sounddevice as sd
 from config import SAMPLE_RATE
 
 class Microphone:
-    def __init__(self, sample_rate: int = SAMPLE_RATE):
+    def __init__(self, sample_rate: int = SAMPLE_RATE, device: int | None = None):
         self.sample_rate = sample_rate
+        self._device = device
         self._lock = threading.Lock()
         self._chunks: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
@@ -25,6 +26,7 @@ class Microphone:
             channels=1,
             dtype="float32",
             blocksize=512,
+            device=self._device,
             callback=self._callback,
         )
         self._stream.start()

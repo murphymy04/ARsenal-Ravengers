@@ -15,7 +15,10 @@ db-delete Remove a person or wipe the database
 import sys
 import time
 import argparse
+import queue
+import threading
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -68,12 +71,37 @@ def _is_diverse(
 # Video pipeline
 # ---------------------------------------------------------------------------
 
+def _screen_height() -> int:
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        h = root.winfo_screenheight()
+        root.destroy()
+        return h
+    except Exception:
+        return 1080
+
+
+def _fit_height(img: np.ndarray, h: int) -> np.ndarray:
+    """Resize image to target height, preserving aspect ratio."""
+    ih, iw = img.shape[:2]
+    w = int(iw * h / ih)
+    return cv2.resize(img, (w, h))
+
+
+def _label(img: np.ndarray, text: str):
+    """Draw a label in the top-left corner of the image (in-place)."""
+    cv2.rectangle(img, (0, 0), (len(text) * 11 + 10, 30), (0, 0, 0), -1)
+    cv2.putText(img, text, (5, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+
 def run_video_loop(
     camera: Camera,
     detector: FaceDetector,
     embedder: FaceEmbedder,
     matcher: FaceMatcher,
-    display: Display,
+    display: Optional[Display],
     db: Database,
 ):
     """Main video loop: detect → embed → match → display.
@@ -90,90 +118,175 @@ def run_video_loop(
     labeled = sum(1 for p in people if p.is_labeled)
     print(f"Loaded {len(people)} cluster(s) ({labeled} labeled, {len(people) - labeled} auto).")
     print(f"New faces need {MIN_SIGHTINGS_TO_CLUSTER} consistent sightings to be clustered.")
-    print("Press 'q' to quit.")
+    print("Press 'q' to quit. Recognized people will be printed to console.")
 
-    tracker = FaceTracker()
     speaking_log = SpeakingLog()
     log_path = DB_PATH.parent / f"speaking_log_{int(time.time())}.json"
-
     speaking_det = _init_speaking_detector()
 
-    # pending: list of {'embeddings', 'mean', 'thumbnail', 'last_frame'}
-    pending: list[dict] = []
-    last_embedding_update: dict[int, int] = {}
+    # Single-slot queues for inter-thread communication
+    frame_slot: queue.Queue = queue.Queue(maxsize=1)
+    result_slot: queue.Queue = queue.Queue(maxsize=1)  # annotated frames → main thread
+    stop_event = threading.Event()
+
+    processor = threading.Thread(
+        target=_recognition_loop,
+        args=(frame_slot, result_slot, stop_event, detector, embedder, matcher, db,
+              speaking_det, speaking_log),
+        daemon=True,
+    )
+    processor.start()
+
+    panel_h = _screen_height() * 8 // 10  # use 80% of screen height
+    latest_annotated = None
+    window = "AR Glasses Demo"
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     frame_count = 0
     start_time = time.time()
 
     try:
         for frame in camera.frames():
-            timestamp = time.time()
-            faces = detector.detect(frame, timestamp=timestamp)
+            # Feed latest frame to processor (drop old one if not consumed yet)
+            try:
+                frame_slot.get_nowait()
+            except queue.Empty:
+                pass
+            frame_slot.put_nowait(frame)
 
-            pending = [
-                p for p in pending
-                if frame_count - p["last_frame"] < PENDING_EXPIRY_FRAMES
-            ]
+            # Pick up latest annotated frame from recognizer if available
+            try:
+                latest_annotated = result_slot.get_nowait()
+            except queue.Empty:
+                pass
 
-            raw_matches = []
-            gallery_dirty = False
+            # Build side-by-side view
+            left = _fit_height(frame, panel_h)
+            right = _fit_height(
+                latest_annotated if latest_annotated is not None else frame,
+                panel_h,
+            )
+            _label(left, "Camera Feed")
+            _label(right, "Face Recognition")
+            combined = np.hstack([left, right])
 
-            for face in faces:
-                embedding = embedder.embed(face.crop)
-                match = matcher.match(embedding)
-
-                if match.is_known:
-                    gallery_dirty |= _maybe_store_embedding(
-                        db, match.person_id, embedding, face,
-                        last_embedding_update, frame_count,
-                    )
-                else:
-                    match, promoted = _update_pending(
-                        db, embedding, face, pending, last_embedding_update, frame_count,
-                    )
-                    gallery_dirty |= promoted
-
-                raw_matches.append(match)
-
-            if gallery_dirty:
-                matcher.update_gallery(db.get_all_people())
-
-            matches, track_ids = tracker.update(faces, raw_matches, frame_count)
-
-            if speaking_det is not None:
-                for face, tid in zip(faces, track_ids):
-                    speaking_det.add_crop(tid, face.crop)
-                speaking_det.run_inference(frame_count, active_track_ids=set(track_ids))
-
-            ts = time.time()
-            for face, match, tid in zip(faces, matches, track_ids):
-                if speaking_det is not None:
-                    face.is_speaking = speaking_det.get_speaking(tid)
-                speaking_log.update(
-                    track_id=tid,
-                    person_id=match.person_id if match.is_known else None,
-                    name=match.name,
-                    is_speaking=face.is_speaking,
-                    timestamp=ts,
-                )
-
-            display.draw(frame, faces, matches)
-            if not display.show(frame):
+            cv2.imshow(window, combined)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
             frame_count += 1
-            if frame_count % 30 == 0:
+            if frame_count % 60 == 0:
                 fps = frame_count / (time.time() - start_time)
-                print(
-                    f"\rFPS: {fps:.1f} | Faces: {len(faces)} | Pending: {len(pending)}",
-                    end="", flush=True,
-                )
+                print(f"\rDisplay FPS: {fps:.1f}", end="", flush=True)
 
     finally:
+        stop_event.set()
+        processor.join(timeout=3)
         if speaking_det is not None:
             speaking_det.close()
         speaking_log.save(log_path)
+        cv2.destroyAllWindows()
 
     print("\nVideo loop ended.")
+
+
+def _recognition_loop(
+    frame_slot: queue.Queue,
+    result_slot: queue.Queue,
+    stop_event: threading.Event,
+    detector: FaceDetector,
+    embedder: FaceEmbedder,
+    matcher: FaceMatcher,
+    db: Database,
+    speaking_det,
+    speaking_log: SpeakingLog,
+):
+    """Background thread: face detection → matching → console output."""
+    tracker = FaceTracker()
+    pending: list[dict] = []
+    last_embedding_update: dict[int, int] = {}
+    frame_count = 0
+    _sample_saved = False
+
+    while not stop_event.is_set():
+        try:
+            frame = frame_slot.get(timeout=0.5)
+        except queue.Empty:
+            continue
+
+        if not _sample_saved:
+            sample_path = str(DB_PATH.parent / "sample_frame.jpg")
+            cv2.imwrite(sample_path, frame)
+            print(f"\n[Debug] Sample frame saved → {sample_path}")
+            _sample_saved = True
+
+        timestamp = time.time()
+        faces = detector.detect(frame, timestamp=timestamp)
+
+        pending = [
+            p for p in pending
+            if frame_count - p["last_frame"] < PENDING_EXPIRY_FRAMES
+        ]
+
+        raw_matches = []
+        gallery_dirty = False
+
+        for face in faces:
+            embedding = embedder.embed(face.crop)
+            match = matcher.match(embedding)
+            if match.is_known:
+                gallery_dirty |= _maybe_store_embedding(
+                    db, match.person_id, embedding, face,
+                    last_embedding_update, frame_count,
+                )
+            else:
+                match, promoted = _update_pending(
+                    db, embedding, face, pending, last_embedding_update, frame_count,
+                )
+                gallery_dirty |= promoted
+            raw_matches.append(match)
+
+        if gallery_dirty:
+            matcher.update_gallery(db.get_all_people())
+
+        matches, track_ids = tracker.update(faces, raw_matches, frame_count)
+
+        if speaking_det is not None:
+            for face, tid in zip(faces, track_ids):
+                speaking_det.add_crop(tid, face.crop)
+            speaking_det.run_inference(frame_count, active_track_ids=set(track_ids))
+
+        ts = time.time()
+        for face, match, tid in zip(faces, matches, track_ids):
+            if speaking_det is not None:
+                face.is_speaking = speaking_det.get_speaking(tid)
+            speaking_log.update(
+                track_id=tid,
+                person_id=match.person_id if match.is_known else None,
+                name=match.name,
+                is_speaking=face.is_speaking,
+                timestamp=ts,
+            )
+
+        if faces:
+            ts_str = time.strftime("%H:%M:%S")
+            names = [m.name for m in matches]
+            print(f"\n[{ts_str}] Faces: {', '.join(names)}", flush=True)
+
+        # Always send annotated frame so the right panel stays live
+        annotated = frame.copy()
+        for face, match in zip(faces, matches):
+            b = face.bbox
+            color = (0, 255, 0) if match.is_known else (0, 0, 255)
+            cv2.rectangle(annotated, (b.x1, b.y1), (b.x2, b.y2), color, 2)
+            cv2.putText(annotated, match.name, (b.x1, b.y1 - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        try:
+            result_slot.get_nowait()
+        except queue.Empty:
+            pass
+        result_slot.put_nowait(annotated)
+
+        frame_count += 1
 
 
 def _init_speaking_detector():
