@@ -7,7 +7,6 @@ from graphiti_core.nodes import EpisodeType
 
 from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
-
 class KnowledgeStore:
     def __init__(self):
         self._client: Graphiti | None = None
@@ -62,7 +61,6 @@ class KnowledgeStore:
             self._run(self._client.close())
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
-
 
 _store: KnowledgeStore | None = None
 
