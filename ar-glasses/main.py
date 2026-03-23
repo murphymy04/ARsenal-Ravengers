@@ -28,6 +28,7 @@ from config import (
     EMBEDDING_DIVERSITY_THRESHOLD, FACE_BLUR_THRESHOLD,
     MIN_SIGHTINGS_TO_CLUSTER, PENDING_CLUSTER_SIMILARITY, PENDING_EXPIRY_FRAMES,
     SPEAKING_BACKEND,
+    FLASK_HOST, FLASK_PORT,
 )
 from models import FaceEmbedding, IdentityMatch
 from input.camera import Camera
@@ -281,7 +282,7 @@ def main():
     parser = argparse.ArgumentParser(description="AR Glasses Prototype")
     parser.add_argument(
         "--mode",
-        choices=["run", "live", "enroll", "label", "merge", "db-info", "db-delete"],
+        choices=["run", "live", "enroll", "label", "merge", "db-info", "db-delete", "api"],
         default="run",
         help=(
             "run: live recognition (default) | "
@@ -290,7 +291,8 @@ def main():
             "merge: consolidate duplicate clusters | "
             "enroll: manually add a named person | "
             "db-info: list database contents | "
-            "db-delete: remove a person or wipe the database"
+            "db-delete: remove a person or wipe the database | "
+            "api: REST API server for companion mobile app"
         ),
     )
     def _camera_source(val):
@@ -302,7 +304,26 @@ def main():
         "--camera", type=_camera_source, default=CAMERA_SOURCE,
         help="Camera source index or 'android' for ADB/scrcpy (default: 0)",
     )
+    parser.add_argument(
+        "--api-host", type=str, default=FLASK_HOST,
+        help="API server bind address (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--api-port", type=int, default=FLASK_PORT,
+        help="API server port (default: 5000)",
+    )
     args = parser.parse_args()
+
+    # API-only mode — no camera or embedder needed
+    if args.mode == "api":
+        from api import PeopleAPI
+        db = Database()
+        try:
+            api = PeopleAPI(db)
+            api.run(host=args.api_host, port=args.api_port)
+        finally:
+            db.close()
+        return
 
     # DB-only modes — no camera or embedder needed
     if args.mode in ("db-info", "db-delete", "label", "merge"):

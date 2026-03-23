@@ -21,3 +21,8 @@ python-dotenv
 
 # Knowledge graph
 graphiti-core
+
+# REST API (companion app)
+fastapi>=0.104
+uvicorn[standard]>=0.24
+python-multipart
