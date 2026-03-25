@@ -94,5 +94,10 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
 
+# Firebase authorization for API
+# Download from: Firebase Console > Project Settings > Service Accounts > Generate new private key
+FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS")  # path to service account JSON file
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
+
 # Ensure data directory exists
 DATA_DIR.mkdir(exist_ok=True)
