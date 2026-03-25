@@ -316,7 +316,7 @@ def main():
 
     # API-only mode — no camera or embedder needed
     if args.mode == "api":
-        from api import PeopleAPI
+        from api.api import PeopleAPI
         db = Database()
         try:
             api = PeopleAPI(db)
