@@ -11,6 +11,9 @@ EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
 EDGEFACE_CHECKPOINT = EDGEFACE_ROOT / "checkpoints" / "edgeface_base.pt"
 
 # Face detection (MediaPipe BlazeFace)
+# "short_range" — Tasks API, optimised for faces < ~2 m (selfie-style)
+# "full_range"  — Solutions API, handles faces up to ~5 m (back-camera style)
+FACE_DETECTOR_MODEL = "opencv"
 DETECTION_CONFIDENCE = 0.35
 FACE_CROP_SIZE = 112  # EdgeFace expects 112x112
 
