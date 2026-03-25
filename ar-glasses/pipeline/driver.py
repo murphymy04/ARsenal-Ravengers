@@ -20,9 +20,8 @@ if str(_AR_ROOT) not in sys.path:
 from config import SAMPLE_RATE, CAMERA_FPS
 from models import TranscriptSegment
 from pipeline.diarization import DiarizationPipeline
-from pipeline.transcription import TranscriptionPipeline
 
-_DIARIZATION_CACHE = _AR_ROOT / "data" / "diarization_cache.json"
+_DIARIZATION_CACHE_DIR = _AR_ROOT / "data" / "diarization_cache"
 
 def _extract_frames(video_path: Path) -> tuple[list[np.ndarray], float]:
     cap = cv2.VideoCapture(str(video_path))
@@ -66,29 +65,34 @@ class PipelineDriver:
     def __init__(
         self,
         diarization: DiarizationPipeline,
-        transcription: TranscriptionPipeline,
+        transcription=None,
     ):
         self._diarization = diarization
         self._transcription = transcription
 
     def run(self, video_path: Path) -> tuple[list[dict], list[TranscriptSegment]]:
-        if _DIARIZATION_CACHE.exists(): # Added this because the video takes ~40s to process and I didn't want to wait
-            print(f"Loading diarization from cache: {_DIARIZATION_CACHE}")
-            
-            with open(_DIARIZATION_CACHE) as f:
+        _DIARIZATION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = _DIARIZATION_CACHE_DIR / f"{video_path.stem}.json"
+
+        if cache_file.exists():
+            print(f"Loading diarization from cache: {cache_file.name}")
+
+            with open(cache_file) as f:
                 diarization_segments = json.load(f)
         else:
             frames, fps = _extract_frames(video_path)
             audio_pcm = _extract_audio_pcm(video_path)
-            
+
             diarization_segments = self._diarization.run(frames, fps, audio_pcm)
-            _DIARIZATION_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(_DIARIZATION_CACHE, "w") as f:
+
+            with open(cache_file, "w") as f:
                 json.dump(diarization_segments, f, indent=2)
 
-        audio_wav = _extract_audio_wav(video_path)
-        transcript_segments = self._transcription.run(audio_wav)
+        if self._transcription:
+            audio_wav = _extract_audio_wav(video_path)
+            transcript_segments = self._transcription.run(audio_wav)
+        else:
+            transcript_segments = []
 
         return diarization_segments, transcript_segments
 
@@ -127,41 +131,72 @@ def combine_segments(
     
     return result
 
+def split_into_conversations(
+    combined: list[dict],
+    chunk_seconds: float = 10.0,
+) -> list[list[dict]]:
+    from pipeline.conversation_end import is_conversation_end
+
+    if not combined:
+        return []
+
+    conversations: list[list[dict]] = []
+    current: list[dict] = []
+    chunk_start = combined[0]["start"]
+
+    for seg in combined:
+        current.append(seg)
+
+        if seg["end"] - chunk_start >= chunk_seconds:
+            chunk = [s for s in current if s["start"] >= chunk_start]
+            if is_conversation_end(chunk):
+                conversations.append(current)
+                current = []
+            chunk_start = seg["end"]
+
+    if current:
+        conversations.append(current)
+
+    return conversations
+
+
+def _collect_videos(path: Path) -> list[Path]:
+    if path.is_file():
+        return [path]
+    return sorted(path.glob("*.mp4")) + sorted(path.glob("*.MP4"))
+
+
 if __name__ == "__main__":
-    from pipeline.identity import NullIdentity, FullIdentity
-    from processing.face_detector import FaceDetector
+    from pipeline.identity import FullIdentity
+    from pipeline.transcription import TranscriptionPipeline
     from processing.face_embedder import FaceEmbedder
     from processing.face_matcher import FaceMatcher
     from storage.database import Database
 
-    VIDEO_PATH = _AR_ROOT.parent / "test_movie.mp4"
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else _AR_ROOT / "test_videos"
+    videos = _collect_videos(target)
 
-    if not VIDEO_PATH.exists():
-        print(f"Test video not found: {VIDEO_PATH}")
+    if not videos:
+        print(f"No videos found at: {target}")
         sys.exit(1)
 
     db = Database()
-    embedder = FaceEmbedder()
-    matcher = FaceMatcher()
-
     driver = PipelineDriver(
-        diarization=DiarizationPipeline(identity=FullIdentity(embedder, matcher, db)),
+        diarization=DiarizationPipeline(identity=FullIdentity(FaceEmbedder(), FaceMatcher(), db)),
         transcription=TranscriptionPipeline(),
     )
 
-    diarization_segments, transcript_segments = driver.run(VIDEO_PATH)
+    for video_path in videos:
+        print(f"\n{'='*60}")
+        print(f"Processing: {video_path.name}")
+        print(f"{'='*60}")
 
-    DiarizationPipeline.test(diarization_segments)
-    TranscriptionPipeline.test(transcript_segments)
+        diarization_segments, transcript_segments = driver.run(video_path)
+        combined = combine_segments(diarization_segments, transcript_segments)
+        conversations = split_into_conversations(combined)
 
-    combined = combine_segments(diarization_segments, transcript_segments)
-    print(f"\n{'='*60}")
-    print(f"Combined: {len(combined)} segments")
-    print(f"{'='*60}")
-    for seg in combined:
-        print(f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}")
-
-    from config import SAVE_TO_MEMORY
-    if SAVE_TO_MEMORY:
-        from pipeline.knowledge import save_to_memory
-        save_to_memory(combined)
+        for i, conv in enumerate(conversations):
+            print(f"\n  Conversation {i + 1} ({len(conv)} segments)")
+            for seg in conv:
+                print(f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}")
+            print(f"  --- end of conversation {i + 1} ---")

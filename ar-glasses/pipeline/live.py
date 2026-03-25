@@ -41,6 +41,7 @@ class LivePipelineDriver:
         self._identity = identity
         self._transcription = transcription
         self._save_to_memory = SAVE_TO_MEMORY
+        self._conversation_buffer: list[dict] = []
 
     def run(self, camera: Camera) -> None:
         detector = FaceDetector()
@@ -84,6 +85,9 @@ class LivePipelineDriver:
                     window_start = timestamp
 
         finally:
+            if self._save_to_memory and self._conversation_buffer:
+                from pipeline.knowledge import save_to_memory
+                save_to_memory(self._conversation_buffer)
             speaker.close()
             detector.close()
             mic.close()
@@ -113,8 +117,12 @@ class LivePipelineDriver:
         combined = combine_segments(diarization_segments, transcript_segments)
 
         if self._save_to_memory and combined:
-            from pipeline.knowledge import save_to_memory
-            save_to_memory(combined)
+            self._conversation_buffer.extend(combined)
+            from pipeline.conversation_end import is_conversation_end
+            if is_conversation_end(combined):
+                from pipeline.knowledge import save_to_memory
+                save_to_memory(self._conversation_buffer)
+                self._conversation_buffer = []
 
         print(f"\n{'='*60}")
         print(f"[{window_start:.1f}s - {window_end:.1f}s] {len(combined)} segments")
