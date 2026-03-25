@@ -54,7 +54,7 @@ class DiarizationPipeline:
                 for face, tid in zip(faces, track_ids):
                     speaker.add_crop(tid, face.crop)
 
-                speaker.run_inference(frame_idx, timestamp=timestamp)
+                speaker.run_inference(frame_idx, active_track_ids=set(track_ids), timestamp=timestamp)
 
                 for face, match, tid in zip(faces, smoothed, track_ids):
                     is_speaking = speaker.get_speaking(tid)
