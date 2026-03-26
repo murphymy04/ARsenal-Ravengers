@@ -1,17 +1,19 @@
 """Real-time audio-visual active speaker detection using Light-ASD (CVPR 2023).
 
-Captures microphone audio in a background thread, maintains a rolling buffer
-of face crops per tracked face, and runs Light-ASD inference every
-LIGHT_ASD_INFERENCE_INTERVAL video frames to decide who is speaking.
+Pure audio consumer — the caller is responsible for feeding audio via
+drip_audio() each frame. Maintains a rolling buffer of face crops per
+tracked face and runs Light-ASD inference every LIGHT_ASD_INFERENCE_INTERVAL
+video frames to decide who is speaking.
 
 Usage in the video loop::
 
-    detector = SpeakingDetector()     # starts mic thread
+    detector = SpeakingDetector()
     ...
     for frame_idx, frame in enumerate(camera.frames()):
+        detector.drip_audio(audio_chunk)              # from mic or simulated
         faces, track_ids = tracker_step(frame)
         for face, tid in zip(faces, track_ids):
-            detector.add_crop(tid, face.crop)   # RGB 112×112
+            detector.add_crop(tid, face.crop)          # RGB 112×112
         detector.run_inference(frame_idx)
         for face, tid in zip(faces, track_ids):
             face.is_speaking = detector.get_speaking(tid)
@@ -21,7 +23,6 @@ Usage in the video loop::
 
 import collections
 import threading
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -53,7 +54,7 @@ from config import (
 class SpeakingDetector:
     """Audio-visual active speaker detection, updating is_speaking per track."""
 
-    def __init__(self, device: str = "cpu", use_mic: bool = True, fps: float = CAMERA_FPS):
+    def __init__(self, device: str = "cpu", fps: float = CAMERA_FPS):
         # Lazy import so the rest of the system works even if torch is absent
         from processing.light_asd.model import ASDInference
         self._model = ASDInference.load(Path(LIGHT_ASD_WEIGHTS), device=device)
@@ -65,7 +66,7 @@ class SpeakingDetector:
         self._mfcc_winstep = 1.0 / (4.0 * self._fps)
         self._mfcc_winlen = max(0.025, self._mfcc_winstep * 3)
 
-        # Audio buffer — holds ~5 seconds of raw float32 mono samples
+        # Audio buffer — holds ~6 seconds of raw float32 mono samples
         max_samples = int(self._sample_rate * 6)
         self._audio_lock = threading.Lock()
         self._audio_buf: collections.deque = collections.deque(maxlen=max_samples)
@@ -73,38 +74,26 @@ class SpeakingDetector:
         # Per-track buffers of grayscale face crops (uint8, 112×112)
         self._crop_bufs: dict[int, collections.deque] = {}
 
-        # Full audio for offline/pre-loaded mode (bypasses the deque)
-        self._full_audio: Optional[np.ndarray] = None
-
         # Latest speaking prediction per track
         self._speaking: dict[int, bool] = {}
 
-        self._running = True
-        self._mic_ok = False
-
-        if use_mic:
-            # Start microphone capture (daemon — dies with the main process)
-            self._mic_thread = threading.Thread(target=self._mic_loop, daemon=True)
-            self._mic_thread.start()
-            # Wait briefly so we know if mic init succeeded
-            time.sleep(0.3)
-        else:
-            self._mic_thread = None
+        self._has_audio = False
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def feed_audio(self, samples: np.ndarray):
-        """Write pre-loaded audio samples into the buffer (bypasses mic).
+    def drip_audio(self, samples: np.ndarray):
+        """Push a chunk of audio into the rolling buffer.
 
-        Args:
-            samples: float32 mono audio at SAMPLE_RATE Hz.
+        Called once per frame by the driver with that frame's worth of
+        audio samples (~533 at 16 kHz / 30 fps).
         """
-        self._full_audio = samples.copy()
+        if len(samples) == 0:
+            return
         with self._audio_lock:
             self._audio_buf.extend(samples)
-        self._mic_ok = True
+        self._has_audio = True
 
     def add_crop(self, track_id: int, crop_rgb: np.ndarray):
         """Buffer a 112×112 RGB face crop for this track."""
@@ -113,7 +102,7 @@ class SpeakingDetector:
         gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)  # (112, 112) uint8
         self._crop_bufs[track_id].append(gray)
 
-    def run_inference(self, frame_count: int, active_track_ids: Optional[set] = None, timestamp: Optional[float] = None):
+    def run_inference(self, frame_count: int, active_track_ids: Optional[set] = None):
         """Run Light-ASD on all active tracks; call once per video frame.
 
         Args:
@@ -121,14 +110,11 @@ class SpeakingDetector:
                 LIGHT_ASD_INFERENCE_INTERVAL frames.
             active_track_ids: set of track IDs still visible this frame.
                 Buffers for tracks not in this set are evicted.
-            timestamp: current video time in seconds. When provided, the
-                audio window is anchored to this position instead of the
-                tail of the buffer (needed for offline/pre-loaded audio).
         """
         if frame_count % LIGHT_ASD_INFERENCE_INTERVAL != 0:
             return
-        if not self._mic_ok:
-            return  # no audio → can't run AV model
+        if not self._has_audio:
+            return
 
         # Evict buffers for tracks that have disappeared
         if active_track_ids is not None:
@@ -148,16 +134,9 @@ class SpeakingDetector:
             # Extract MFCC for the corresponding audio window
             audio_sec = T / self._fps
             needed = int(audio_sec * self._sample_rate)
-            if timestamp is not None and self._full_audio is not None:
-                audio_end = int(timestamp * self._sample_rate)
-                audio_start = max(0, audio_end - needed)
-                if audio_end > len(self._full_audio) or audio_end - audio_start < needed // 2:
-                    continue
-                audio_window = self._full_audio[audio_start:audio_end]
-            else:
-                if len(audio_snapshot) < needed:
-                    continue
-                audio_window = audio_snapshot[-needed:]
+            if len(audio_snapshot) < needed:
+                continue
+            audio_window = audio_snapshot[-needed:]
 
             mfcc = _extract_mfcc(
                 audio_window,
@@ -190,43 +169,7 @@ class SpeakingDetector:
         self._speaking.pop(track_id, None)
 
     def close(self):
-        self._running = False
-
-    # ------------------------------------------------------------------
-    # Microphone capture (background thread)
-    # ------------------------------------------------------------------
-
-    def _mic_loop(self):
-        try:
-            import sounddevice as sd
-        except ImportError:
-            print("[SpeakingDetector] sounddevice not installed — mic disabled. "
-                  "Run: pip install sounddevice")
-            return
-
-        BLOCK = 512   # samples per callback (~32 ms at 16 kHz)
-
-        def _callback(indata, frames, ts, status):
-            # Copy mono channel before the callback returns (buffer may be reused)
-            mono = indata[:, 0].copy()
-            with self._audio_lock:
-                self._audio_buf.extend(mono)
-
-        try:
-            with sd.InputStream(
-                samplerate=self._sample_rate,
-                channels=1,
-                dtype="float32",
-                blocksize=BLOCK,
-                callback=_callback,
-            ):
-                self._mic_ok = True
-                print("[SpeakingDetector] Microphone active.")
-                while self._running:
-                    time.sleep(0.05)
-        except Exception as e:
-            print(f"[SpeakingDetector] Mic error: {e} — speaking detection disabled.")
-            self._mic_ok = False
+        pass
 
 
 # ---------------------------------------------------------------------------

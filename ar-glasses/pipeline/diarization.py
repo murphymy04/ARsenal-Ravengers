@@ -19,6 +19,7 @@ if str(_AR_ROOT) not in sys.path:
 
 from config import CAMERA_FPS
 from models import IdentityModule
+from pipeline.segments import merge_close_segments
 from pipeline.identity import NullIdentity
 from processing.face_detector import FaceDetector
 from processing.face_tracker import FaceTracker
@@ -38,14 +39,19 @@ class DiarizationPipeline:
     ) -> list[dict]:
         detector = FaceDetector()
         tracker = FaceTracker()
-        speaker = SpeakingDetector(use_mic=False, fps=fps)
+        speaker = SpeakingDetector(fps=fps)
         log = SpeakingLog()
 
-        speaker.feed_audio(audio)
+        samples_per_frame = len(audio) / len(frames) if frames else 0
 
         try:
             for frame_idx, frame in enumerate(frames):
                 timestamp = frame_idx / fps
+
+                audio_start = int(frame_idx * samples_per_frame)
+                audio_end = int((frame_idx + 1) * samples_per_frame)
+                speaker.drip_audio(audio[audio_start:audio_end])
+
                 faces = detector.detect(frame, timestamp=timestamp)
 
                 raw_matches = [self._identity.identify(face, frame_idx) for face in faces]
@@ -54,7 +60,7 @@ class DiarizationPipeline:
                 for face, tid in zip(faces, track_ids):
                     speaker.add_crop(tid, face.crop)
 
-                speaker.run_inference(frame_idx, active_track_ids=set(track_ids), timestamp=timestamp)
+                speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
                 for face, match, tid in zip(faces, smoothed, track_ids):
                     is_speaking = speaker.get_speaking(tid)
@@ -70,36 +76,7 @@ class DiarizationPipeline:
             detector.close()
 
         log.close(timestamp=len(frames) / fps)
-        return self._merge_close_segments(log.get_segments())
-
-    @staticmethod
-    def _merge_close_segments(
-        segments: list[dict], max_gap: float = 2.0
-    ) -> list[dict]:
-        if not segments:
-            return segments
-
-        by_track: dict[int, list[dict]] = {}
-        for seg in segments:
-            by_track.setdefault(seg["track_id"], []).append(seg)
-
-        merged: list[dict] = []
-        for segs in by_track.values():
-            segs.sort(key=lambda s: s["start"])
-            current = dict(segs[0])
-            for nxt in segs[1:]:
-                if nxt["start"] - current["end"] < max_gap:
-                    current["end"] = nxt["end"]
-                    if nxt.get("person_id") is not None:
-                        current["person_id"] = nxt["person_id"]
-                        current["name"] = nxt["name"]
-                else:
-                    merged.append(current)
-                    current = dict(nxt)
-            merged.append(current)
-
-        merged.sort(key=lambda s: s["start"])
-        return merged
+        return merge_close_segments(log.get_segments())
 
     @staticmethod
     def test(segments: list[dict]):
