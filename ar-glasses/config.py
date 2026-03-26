@@ -48,7 +48,7 @@ LIGHT_ASD_WEIGHTS = DATA_DIR / "light_asd.model"  # downloaded automatically on 
 LIGHT_ASD_VIDEO_FRAMES = 30          # rolling window of face crops per inference (≈1 s at 30 FPS)
 LIGHT_ASD_MIN_FRAMES = 10            # minimum buffered frames before running inference
 LIGHT_ASD_INFERENCE_INTERVAL = 5     # run inference every N video frames
-LIGHT_ASD_SPEAKING_THRESHOLD = 0.5   # softmax probability above which = speaking
+LIGHT_ASD_SPEAKING_THRESHOLD = 0.25   # softmax probability above which = speaking
 
 # Temporal smoothing (#9)
 TEMPORAL_SMOOTHING_FRAMES = 7   # identity history window length for majority-vote smoothing
@@ -65,6 +65,7 @@ ANDROID_CAMERA_FPS = 10   # Android camera streaming target fps
 SAMPLE_RATE = 16000
 CHUNK_DURATION = 0.5    # seconds per audio chunk
 VAD_AGGRESSIVENESS = 2  # webrtcvad aggressiveness (0-3)
+SIMULATION_AUDIO_GAIN = 1.5  # boost weak glasses mic audio for simulation
 
 # Audio processing
 WHISPER_MODEL = "small"

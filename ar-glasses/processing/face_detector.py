@@ -18,8 +18,8 @@ from typing import List
 
 from models import BoundingBox, DetectedFace
 from config import (
-    FACE_CROP_SIZE, FACE_MIN_SIZE, SPEAKING_JAW_THRESHOLD, DATA_DIR,
-    SPEAKING_BACKEND,
+    DETECTION_CONFIDENCE, FACE_CROP_SIZE, FACE_MIN_SIZE, SPEAKING_JAW_THRESHOLD,
+    DATA_DIR, SPEAKING_BACKEND,
 )
 
 # --------------------------------------------------------------------------
@@ -97,22 +97,22 @@ def _padded_crop(rgb: np.ndarray, x1, y1, x2, y2) -> np.ndarray:
 class FaceDetector:
     """Detects faces (BlazeFace) and estimates speaking state (FaceLandmarker)."""
 
-    def __init__(self, min_confidence: float = 0.5):
+    def __init__(self, min_confidence: float = DETECTION_CONFIDENCE):
         _ensure_model(_DETECTOR_URL,   _DETECTOR_PATH)
         _ensure_model(_LANDMARKER_URL, _LANDMARKER_PATH)
 
-        # BlazeFace — fast detection + eye keypoints
+        # BlazeFace — VIDEO mode uses temporal smoothing across frames
         detector_opts = mp.tasks.vision.FaceDetectorOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(_DETECTOR_PATH)),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            running_mode=mp.tasks.vision.RunningMode.VIDEO,
             min_detection_confidence=min_confidence,
         )
         self._detector = mp.tasks.vision.FaceDetector.create_from_options(detector_opts)
 
-        # FaceLandmarker — 478 landmarks + blendshapes for speaking detection
+        # FaceLandmarker — VIDEO mode for temporal consistency
         landmarker_opts = mp.tasks.vision.FaceLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(_LANDMARKER_PATH)),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            running_mode=mp.tasks.vision.RunningMode.VIDEO,
             num_faces=10,
             output_face_blendshapes=True,
         )
@@ -133,9 +133,10 @@ class FaceDetector:
         h, w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        timestamp_ms = int(timestamp * 1000)
 
         # --- BlazeFace detection ---
-        det_result = self._detector.detect(mp_image)
+        det_result = self._detector.detect_for_video(mp_image, timestamp_ms)
         faces: List[DetectedFace] = []
 
         for detection in det_result.detections:
@@ -171,7 +172,7 @@ class FaceDetector:
         # Skipped when Light-ASD is active; Light-ASD sets is_speaking externally.
         # How does this get skipped? the speaking backend is a constant.
         if faces and SPEAKING_BACKEND == "mediapipe":
-            self._update_speaking(mp_image, faces, w, h)
+            self._update_speaking(mp_image, timestamp_ms, faces, w, h)
 
         self._frame_count += 1
         return faces
@@ -179,12 +180,13 @@ class FaceDetector:
     def _update_speaking(
         self,
         mp_image: mp.Image,
+        timestamp_ms: int,
         faces: List[DetectedFace],
         w: int,
         h: int,
     ):
         """Run FaceLandmarker and set is_speaking on the best-matching face."""
-        lm_result = self._landmarker.detect(mp_image)
+        lm_result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
         if not lm_result.face_landmarks or not lm_result.face_blendshapes:
             return
 
