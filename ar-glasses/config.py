@@ -11,6 +11,9 @@ EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
 EDGEFACE_CHECKPOINT = EDGEFACE_ROOT / "checkpoints" / "edgeface_base.pt"
 
 # Face detection (MediaPipe BlazeFace)
+# "short_range" — Tasks API, optimised for faces < ~2 m (selfie-style)
+# "full_range"  — Solutions API, handles faces up to ~5 m (back-camera style)
+FACE_DETECTOR_MODEL = "opencv"
 DETECTION_CONFIDENCE = 0.35
 FACE_CROP_SIZE = 112  # EdgeFace expects 112x112
 
@@ -97,6 +100,11 @@ SAVE_TO_MEMORY = os.getenv("SAVE_TO_MEMORY", "false").lower() == "true"
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
+
+# Firebase authorization for API
+# Download from: Firebase Console > Project Settings > Service Accounts > Generate new private key
+FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS")  # path to service account JSON file
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
 
 # Ensure data directory exists
 DATA_DIR.mkdir(exist_ok=True)

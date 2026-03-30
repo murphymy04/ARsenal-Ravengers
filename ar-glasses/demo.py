@@ -4,6 +4,13 @@ Run with:
     streamlit run demo.py
     streamlit run demo.py -- --camera android
     streamlit run demo.py -- --camera android --mic-device 2
+    streamlit run demo.py -- --camera ipwebcam
+    streamlit run demo.py -- --camera ipwebcam --ipwebcam-url http://localhost:9090/video
+
+IP Webcam setup (Play Store app):
+    1. Install 'IP Webcam' on the glasses, tap 'Start server'.
+    2. adb forward tcp:8080 tcp:8080
+    3. streamlit run demo.py -- --camera ipwebcam
 
 To list available microphone devices:
     python -c "import sounddevice as sd; print(sd.query_devices())"
@@ -123,7 +130,8 @@ class PipelineState:
 # Background pipeline thread
 # ---------------------------------------------------------------------------
 
-def _recognition_thread(state: PipelineState, camera_source, mic_device: Optional[int]):
+def _recognition_thread(state: PipelineState, camera_source, mic_device: Optional[int],
+                        ipwebcam_url: str = "http://localhost:8080/video"):
     try:
         state.status = "Loading face detector…"
         db = Database()
@@ -144,6 +152,9 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
         if camera_source == "android":
             from input.android_camera import AndroidCamera
             camera = AndroidCamera()
+        elif camera_source == "ipwebcam":
+            from input.android_camera import IPWebcamCamera
+            camera = IPWebcamCamera(url=ipwebcam_url)
         else:
             camera = Camera(source=camera_source)
 
@@ -290,10 +301,18 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
         state.error = str(e)
     finally:
         if not state.error and frames_received == 0:
-            state.error = (
-                "Camera produced no frames — check ADB connection.\n"
-                "Run: adb devices"
-            )
+            if camera_source == "ipwebcam":
+                state.error = (
+                    f"IP Webcam stream produced no frames — check setup:\n"
+                    f"  1. IP Webcam app is running on the glasses\n"
+                    f"  2. adb forward tcp:8080 tcp:8080\n"
+                    f"  3. Stream URL: {ipwebcam_url}"
+                )
+            else:
+                state.error = (
+                    "Camera produced no frames — check ADB connection.\n"
+                    "Run: adb devices"
+                )
         speaking_log.save(log_path)
         if mic is not None:
             mic.close()
@@ -421,11 +440,19 @@ st.set_page_config(page_title="ARgusEye", layout="wide", page_icon="🕶️")
 
 # Parse args (Streamlit strips `--` before the script sees sys.argv)
 _parser = argparse.ArgumentParser()
-_parser.add_argument("--camera", default="0")
+_parser.add_argument("--camera", default="0",
+                     help="Camera source: 0 (webcam), android (scrcpy), ipwebcam (IP Webcam app)")
+_parser.add_argument("--ipwebcam-url", default="http://localhost:8080/video",
+                     help="IP Webcam MJPEG stream URL (used when --camera ipwebcam)")
 _parser.add_argument("--mic-device", type=int, default=None,
                      help="sounddevice index for microphone (glasses USB audio)")
 _parsed, _ = _parser.parse_known_args(sys.argv[1:])
-_camera_source = "android" if _parsed.camera == "android" else int(_parsed.camera)
+_camera_source = (
+    "android"   if _parsed.camera == "android"   else
+    "ipwebcam"  if _parsed.camera == "ipwebcam"  else
+    int(_parsed.camera)
+)
+_ipwebcam_url = _parsed.ipwebcam_url
 _mic_device = _parsed.mic_device
 
 # Start pipeline once per browser session.
@@ -439,7 +466,7 @@ if "pipeline_state" not in st.session_state or not _state_is_valid(st.session_st
     _state = PipelineState()
     _thread = threading.Thread(
         target=_recognition_thread,
-        args=(_state, _camera_source, _mic_device),
+        args=(_state, _camera_source, _mic_device, _ipwebcam_url),
         daemon=True,
     )
     _thread.start()
