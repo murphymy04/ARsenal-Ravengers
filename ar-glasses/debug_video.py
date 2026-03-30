@@ -10,13 +10,20 @@ import numpy as np
 import sounddevice as sd
 import time
 
-from config import CAMERA_FPS, SAMPLE_RATE, SIMULATION_AUDIO_GAIN
+from config import CAMERA_FPS, SAMPLE_RATE, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND
 from input.microphone import SimulatedMic
 from pipeline.live import extract_audio_pcm, get_video_fps
 from pipeline.identity import NullIdentity
 from processing.face_detector import FaceDetector
 from processing.face_tracker import FaceTracker
-from processing.speaking_detector import SpeakingDetector
+
+
+def _create_speaker(fps: float):
+    if SPEAKING_BACKEND == "vad_rms":
+        from processing.vad_speaker import VadSpeaker
+        return VadSpeaker(fps=fps)
+    from processing.speaking_detector import SpeakingDetector
+    return SpeakingDetector(fps=fps)
 
 
 def main(video_path: Path):
@@ -27,7 +34,7 @@ def main(video_path: Path):
     identity = NullIdentity()
     detector = FaceDetector()
     tracker = FaceTracker()
-    speaker = SpeakingDetector(fps=fps)
+    speaker = _create_speaker(fps)
 
     # Start audio playback (non-blocking) — uses the same denoised+boosted audio
     sd.play(mic.audio, samplerate=SAMPLE_RATE)
