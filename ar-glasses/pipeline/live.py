@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2
 import numpy as np
 
-from config import CAMERA_FPS, LIVE_BUFFER_SECONDS, SAMPLE_RATE, SAVE_TO_MEMORY, SIMULATION_AUDIO_GAIN
+from config import CAMERA_FPS, LIVE_BUFFER_SECONDS, SAMPLE_RATE, SAVE_TO_MEMORY, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND
 from input.camera import Camera
 from input.microphone import Microphone
 from models import IdentityModule
@@ -30,8 +30,15 @@ from pipeline.segments import merge_close_segments
 from pipeline.transcription import TranscriptionPipeline
 from processing.face_detector import FaceDetector
 from processing.face_tracker import FaceTracker
-from processing.speaking_detector import SpeakingDetector
 from storage.speaking_log import SpeakingLog
+
+
+def _create_speaker(fps: float):
+    if SPEAKING_BACKEND == "vad_rms":
+        from processing.vad_speaker import VadSpeaker
+        return VadSpeaker(fps=fps)
+    from processing.speaking_detector import SpeakingDetector
+    return SpeakingDetector(fps=fps)
 
 
 def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -84,7 +91,7 @@ class LivePipelineDriver:
 
         detector = FaceDetector()
         tracker = FaceTracker()
-        speaker = SpeakingDetector(fps=fps)
+        speaker = _create_speaker(fps)
         log = SpeakingLog()
 
         all_combined: list[dict] = []
