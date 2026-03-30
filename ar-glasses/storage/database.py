@@ -29,7 +29,7 @@ class Database:
                 name        TEXT NOT NULL,
                 notes       TEXT DEFAULT '',
                 face_thumbnail BLOB,
-                is_labeled  INTEGER DEFAULT 1,
+                is_labeled  INTEGER DEFAULT 0,
                 created_at  TEXT DEFAULT (datetime('now')),
                 last_seen   TEXT DEFAULT (datetime('now'))
             );
@@ -58,10 +58,14 @@ class Database:
     def _migrate_schema(self):
         """Add columns introduced after initial deployment (idempotent)."""
         try:
-            self._conn.execute("ALTER TABLE people ADD COLUMN is_labeled INTEGER DEFAULT 1")
+            self._conn.execute("ALTER TABLE people ADD COLUMN is_labeled INTEGER DEFAULT 0")
             self._conn.commit()
         except Exception:
             pass  # column already exists
+
+        # Ensure existing records are marked as unlabeled until API labeling occurs.
+        self._conn.execute("UPDATE people SET is_labeled = 0 WHERE is_labeled IS NULL OR is_labeled != 0")
+        self._conn.commit()
 
     # --- People CRUD ---
 
