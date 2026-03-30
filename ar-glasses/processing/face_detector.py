@@ -186,7 +186,7 @@ class FaceDetector:
         # FaceLandmarker — shared by all backends (speaking detection)
         landmarker_opts = mp.tasks.vision.FaceLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(_LANDMARKER_PATH)),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            running_mode=mp.tasks.vision.RunningMode.VIDEO,
             num_faces=10,
             output_face_blendshapes=True,
         )
