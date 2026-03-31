@@ -17,10 +17,9 @@ _AR_ROOT = Path(__file__).resolve().parent.parent
 if str(_AR_ROOT) not in sys.path:
     sys.path.insert(0, str(_AR_ROOT))
 
-from config import CAMERA_FPS
 from models import IdentityModule
-from pipeline.segments import merge_close_segments
 from pipeline.identity import NullIdentity
+from pipeline.segments import merge_close_segments
 from processing.face_detector import FaceDetector
 from processing.face_tracker import FaceTracker
 from processing.speaking_detector import SpeakingDetector
@@ -54,15 +53,17 @@ class DiarizationPipeline:
 
                 faces = detector.detect(frame, timestamp=timestamp)
 
-                raw_matches = [self._identity.identify(face, frame_idx) for face in faces]
+                raw_matches = [
+                    self._identity.identify(face, frame_idx) for face in faces
+                ]
                 smoothed, track_ids = tracker.update(faces, raw_matches, frame_idx)
 
-                for face, tid in zip(faces, track_ids):
+                for face, tid in zip(faces, track_ids, strict=False):
                     speaker.add_crop(tid, face.crop)
 
                 speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
-                for face, match, tid in zip(faces, smoothed, track_ids):
+                for face, match, tid in zip(faces, smoothed, track_ids, strict=False):
                     is_speaking = speaker.get_speaking(tid)
                     log.update(
                         track_id=tid,
@@ -80,15 +81,17 @@ class DiarizationPipeline:
 
     @staticmethod
     def test(segments: list[dict]):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Speaking log: {len(segments)} segments")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         track_ids = set()
         for seg in segments:
             track_ids.add(seg["track_id"])
             dur = seg["end"] - seg["start"]
-            print(f"  track={seg['track_id']:2d}  {seg['start']:7.2f}s - {seg['end']:7.2f}s  ({dur:.2f}s)  {seg['name']}")
+            print(
+                f"  track={seg['track_id']:2d}  {seg['start']:7.2f}s - {seg['end']:7.2f}s  ({dur:.2f}s)  {seg['name']}"
+            )
 
         print(f"\nDistinct tracks: {sorted(track_ids)}")
         print(f"Total segments:  {len(segments)}")

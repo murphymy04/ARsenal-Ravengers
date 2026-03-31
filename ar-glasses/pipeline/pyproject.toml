@@ -1,0 +1,9 @@
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "SIM", "UP", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"

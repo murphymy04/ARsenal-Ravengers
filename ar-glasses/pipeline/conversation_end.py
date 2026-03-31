@@ -35,6 +35,7 @@ _RESPONSE_FORMAT = {
     },
 }
 
+
 def is_conversation_end(segments: list[dict]) -> bool:
     if not segments:
         return False
@@ -51,26 +52,53 @@ def is_conversation_end(segments: list[dict]) -> bool:
         temperature=0,
     )
 
-    print("is_conversation_end responded with ", json.loads(response.choices[0].message.content)["ended"])
+    print(
+        "is_conversation_end responded with ",
+        json.loads(response.choices[0].message.content)["ended"],
+    )
 
     return json.loads(response.choices[0].message.content)["ended"]
 
 
 if __name__ == "__main__":
     cases = [
-        ("mid-conversation", False, [
-            {"speaker": "Person 1", "text": "So what are you working on these days?"},
-            {"speaker": "Person 2", "text": "I am building a smart glasses app that acts as a personal secretary."},
-            {"speaker": "Person 1", "text": "Oh thats really cool, what kind of glasses are you using?"},
-        ]),
-        ("ending", True, [
-            {"speaker": "Person 1", "text": "Well it was great meeting you, good luck with the project!"},
-            {"speaker": "Person 2", "text": "Thanks, you too! See you around."},
-            {"speaker": "Person 1", "text": "Bye!"},
-        ]),
-        ("short fragment", False, [
-            {"speaker": "wearer", "text": "Oh."},
-        ]),
+        (
+            "mid-conversation",
+            False,
+            [
+                {
+                    "speaker": "Person 1",
+                    "text": "So what are you working on these days?",
+                },
+                {
+                    "speaker": "Person 2",
+                    "text": "I am building a smart glasses app that acts as a personal secretary.",
+                },
+                {
+                    "speaker": "Person 1",
+                    "text": "Oh thats really cool, what kind of glasses are you using?",
+                },
+            ],
+        ),
+        (
+            "ending",
+            True,
+            [
+                {
+                    "speaker": "Person 1",
+                    "text": "Well it was great meeting you, good luck with the project!",
+                },
+                {"speaker": "Person 2", "text": "Thanks, you too! See you around."},
+                {"speaker": "Person 1", "text": "Bye!"},
+            ],
+        ),
+        (
+            "short fragment",
+            False,
+            [
+                {"speaker": "wearer", "text": "Oh."},
+            ],
+        ),
         ("empty", False, []),
     ]
 
