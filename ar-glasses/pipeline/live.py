@@ -20,8 +20,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cv2
 import numpy as np
-
-from config import CAMERA_FPS, LIVE_BUFFER_SECONDS, SAMPLE_RATE, SAVE_TO_MEMORY, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND, VISION_STRIDE
+from config import (
+    CAMERA_FPS,
+    LIVE_BUFFER_SECONDS,
+    SAMPLE_RATE,
+    SAVE_TO_MEMORY,
+    SIMULATION_AUDIO_GAIN,
+    SPEAKING_BACKEND,
+    VISION_STRIDE,
+)
 from input.camera import Camera
 from input.microphone import Microphone
 from models import IdentityModule
@@ -36,8 +43,10 @@ from storage.speaking_log import SpeakingLog
 def _create_speaker(fps: float):
     if SPEAKING_BACKEND == "vad_rms":
         from processing.vad_speaker import VadSpeaker
+
         return VadSpeaker(fps=fps)
     from processing.speaking_detector import SpeakingDetector
+
     return SpeakingDetector(fps=fps)
 
 
@@ -54,11 +63,18 @@ def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
 
 def extract_audio_pcm(video_path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     cmd = [
-        "ffmpeg", "-i", str(video_path),
-        "-vn", "-ac", "1",
-        "-ar", str(sample_rate),
-        "-f", "f32le",
-        "-loglevel", "error",
+        "ffmpeg",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "f32le",
+        "-loglevel",
+        "error",
         "pipe:1",
     ]
     result = subprocess.run(cmd, capture_output=True, check=True)
@@ -79,7 +95,14 @@ class LivePipelineDriver:
         self.save_to_memory = SAVE_TO_MEMORY
         self.conversation_buffer: list[dict] = []
 
-    def run(self, camera: Camera, mic=None, clock_fn=None, fps: float = CAMERA_FPS, vision_stride: int = 1) -> list[dict]:
+    def run(
+        self,
+        camera: Camera,
+        mic=None,
+        clock_fn=None,
+        fps: float = CAMERA_FPS,
+        vision_stride: int = 1,
+    ) -> list[dict]:
         owns_mic = mic is None
         if owns_mic:
             mic = Microphone()
@@ -106,7 +129,9 @@ class LivePipelineDriver:
         last_track_ids = []
 
         if vision_stride > 1:
-            print(f"  [stride] vision every {vision_stride} frames ({fps / vision_stride:.0f} detections/s)")
+            print(
+                f"  [stride] vision every {vision_stride} frames ({fps / vision_stride:.0f} detections/s)"
+            )
 
         try:
             for frame in camera.frames():
@@ -117,10 +142,12 @@ class LivePipelineDriver:
 
                 if frame_idx % vision_stride == 0:
                     faces = detector.detect(frame, timestamp=timestamp)
-                    raw_matches = [self.identity.identify(face, frame_idx) for face in faces]
+                    raw_matches = [
+                        self.identity.identify(face, frame_idx) for face in faces
+                    ]
                     smoothed, track_ids = tracker.update(faces, raw_matches, frame_idx)
 
-                    for face, tid in zip(faces, track_ids):
+                    for face, tid in zip(faces, track_ids, strict=False):
                         speaker.add_crop(tid, face.crop)
 
                     last_faces = faces
@@ -134,7 +161,7 @@ class LivePipelineDriver:
                 speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
                 window_face_counts.append(len(faces))
-                for face, match, tid in zip(faces, smoothed, track_ids):
+                for face, match, tid in zip(faces, smoothed, track_ids, strict=False):
                     is_speaking = speaker.get_speaking(tid)
                     if is_speaking:
                         window_speaking_frames += 1
@@ -151,8 +178,12 @@ class LivePipelineDriver:
                 if timestamp - window_start >= LIVE_BUFFER_SECONDS:
                     n_frames = len(window_face_counts)
                     avg_faces = sum(window_face_counts) / n_frames if n_frames else 0
-                    print(f"\n  [debug] {n_frames} frames, avg {avg_faces:.1f} faces/frame, {window_speaking_frames} speaking-true frames")
-                    combined, diarization = self.flush_window(log, mic, window_start, timestamp)
+                    print(
+                        f"\n  [debug] {n_frames} frames, avg {avg_faces:.1f} faces/frame, {window_speaking_frames} speaking-true frames"
+                    )
+                    combined, diarization = self.flush_window(
+                        log, mic, window_start, timestamp
+                    )
                     all_combined.extend(combined)
                     all_diarization.extend(diarization)
                     log = SpeakingLog()
@@ -164,14 +195,19 @@ class LivePipelineDriver:
             if window_face_counts:
                 n_frames = len(window_face_counts)
                 avg_faces = sum(window_face_counts) / n_frames if n_frames else 0
-                print(f"\n  [debug] {n_frames} frames, avg {avg_faces:.1f} faces/frame, {window_speaking_frames} speaking-true frames")
-                combined, diarization = self.flush_window(log, mic, window_start, timestamp)
+                print(
+                    f"\n  [debug] {n_frames} frames, avg {avg_faces:.1f} faces/frame, {window_speaking_frames} speaking-true frames"
+                )
+                combined, diarization = self.flush_window(
+                    log, mic, window_start, timestamp
+                )
                 all_combined.extend(combined)
                 all_diarization.extend(diarization)
 
         finally:
             if self.save_to_memory and self.conversation_buffer:
                 from pipeline.knowledge import save_to_memory
+
                 save_to_memory(self.conversation_buffer)
             speaker.close()
             detector.close()
@@ -180,7 +216,9 @@ class LivePipelineDriver:
 
         return all_combined, all_diarization
 
-    def flush_window(self, log, mic, window_start, window_end) -> tuple[list[dict], list[dict]]:
+    def flush_window(
+        self, log, mic, window_start, window_end
+    ) -> tuple[list[dict], list[dict]]:
         log.close(timestamp=window_end)
         diarization_segments = merge_close_segments(log.get_segments())
 
@@ -201,20 +239,26 @@ class LivePipelineDriver:
         if self.save_to_memory and combined:
             self.conversation_buffer.extend(combined)
             from pipeline.conversation_end import is_conversation_end
+
             if is_conversation_end(combined):
                 from pipeline.knowledge import save_to_memory
+
                 save_to_memory(self.conversation_buffer)
                 self.conversation_buffer = []
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[{window_start:.1f}s - {window_end:.1f}s]")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"  ASD segments ({len(diarization_segments)}):")
         for seg in diarization_segments:
-            print(f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['name']} (track {seg['track_id']})")
+            print(
+                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['name']} (track {seg['track_id']})"
+            )
         print(f"  Combined ({len(combined)}):")
         for seg in combined:
-            print(f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}")
+            print(
+                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}"
+            )
 
         return combined, diarization_segments
 
@@ -242,7 +286,7 @@ if __name__ == "__main__":
         SIMULATION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_file = SIMULATION_CACHE_DIR / f"{video_path.stem}.json"
 
-        if 1==2:
+        if 1 == 2:
             print(f"Loading simulation from cache: {cache_file.name}")
             with open(cache_file) as f:
                 cached = json.load(f)
@@ -250,10 +294,14 @@ if __name__ == "__main__":
             diarization = cached["diarization"]
             print(f"\n  ASD segments ({len(diarization)}):")
             for seg in diarization:
-                print(f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['name']} (track {seg['track_id']})")
+                print(
+                    f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['name']} (track {seg['track_id']})"
+                )
             print(f"\n  Combined ({len(combined)}):")
             for seg in combined:
-                print(f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}")
+                print(
+                    f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}"
+                )
         else:
             from input.microphone import SimulatedMic
 
@@ -261,7 +309,9 @@ if __name__ == "__main__":
             print(f"Simulating: {video_path.name} ({fps:.1f} fps)")
 
             audio = extract_audio_pcm(video_path)
-            sim_mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
+            sim_mic = SimulatedMic(
+                audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False
+            )
             camera = Camera(source=str(video_path))
 
             combined, diarization = driver.run(
@@ -273,7 +323,9 @@ if __name__ == "__main__":
             )
 
             with open(cache_file, "w") as f:
-                json.dump({"combined": combined, "diarization": diarization}, f, indent=2)
+                json.dump(
+                    {"combined": combined, "diarization": diarization}, f, indent=2
+                )
             print(f"Saved simulation cache: {cache_file.name}")
     else:
         camera = Camera()

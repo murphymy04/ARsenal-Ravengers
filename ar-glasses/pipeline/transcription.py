@@ -22,6 +22,7 @@ load_dotenv(_AR_ROOT / ".env")
 
 from models import TranscriptSegment
 
+
 class TranscriptionPipeline:
     def __init__(self):
         self._client = Groq()
@@ -51,9 +52,9 @@ class TranscriptionPipeline:
 
     @staticmethod
     def test(segments: list[TranscriptSegment]):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Transcript: {len(segments)} segments")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for seg in segments:
             print(f"  [{seg.start_time:7.2f}s - {seg.end_time:7.2f}s]  {seg.text}")
