@@ -9,7 +9,7 @@ matched to speakers by finding the speaking segment that overlaps each text segm
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
