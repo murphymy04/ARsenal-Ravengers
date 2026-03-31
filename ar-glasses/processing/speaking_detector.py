@@ -13,7 +13,7 @@ Usage in the video loop::
         detector.drip_audio(audio_chunk)              # from mic or simulated
         faces, track_ids = tracker_step(frame)
         for face, tid in zip(faces, track_ids):
-            detector.add_crop(tid, face.crop)          # RGB 112×112
+            detector.add_crop(tid, face.crop)          # RGB 112x112
         detector.run_inference(frame_idx)
         for face, tid in zip(faces, track_ids):
             face.is_speaking = detector.get_speaking(tid)
@@ -24,7 +24,6 @@ Usage in the video loop::
 import collections
 import threading
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -41,13 +40,19 @@ except ImportError:
     _librosa = None
 
 if _psf_mfcc is None and _librosa is None:
-    print("[SpeakingDetector] Neither python_speech_features nor librosa found.\n"
-          "  Run: pip install python_speech_features")
+    print(
+        "[SpeakingDetector] Neither python_speech_features nor librosa found.\n"
+        "  Run: pip install python_speech_features"
+    )
 
 from config import (
-    LIGHT_ASD_WEIGHTS, LIGHT_ASD_VIDEO_FRAMES, LIGHT_ASD_INFERENCE_INTERVAL,
-    LIGHT_ASD_MIN_FRAMES, LIGHT_ASD_SPEAKING_THRESHOLD,
-    CAMERA_FPS, SAMPLE_RATE,
+    CAMERA_FPS,
+    LIGHT_ASD_INFERENCE_INTERVAL,
+    LIGHT_ASD_MIN_FRAMES,
+    LIGHT_ASD_SPEAKING_THRESHOLD,
+    LIGHT_ASD_VIDEO_FRAMES,
+    LIGHT_ASD_WEIGHTS,
+    SAMPLE_RATE,
 )
 
 
@@ -57,6 +62,7 @@ class SpeakingDetector:
     def __init__(self, device: str = "cpu", fps: float = CAMERA_FPS):
         # Lazy import so the rest of the system works even if torch is absent
         from processing.light_asd.model import ASDInference
+
         self._model = ASDInference.load(Path(LIGHT_ASD_WEIGHTS), device=device)
 
         self._fps = fps
@@ -71,7 +77,7 @@ class SpeakingDetector:
         self._audio_lock = threading.Lock()
         self._audio_buf: collections.deque = collections.deque(maxlen=max_samples)
 
-        # Per-track buffers of grayscale face crops (uint8, 112×112)
+        # Per-track buffers of grayscale face crops (uint8, 112x112)
         self._crop_bufs: dict[int, collections.deque] = {}
 
         # Latest speaking prediction per track
@@ -96,13 +102,13 @@ class SpeakingDetector:
         self._has_audio = True
 
     def add_crop(self, track_id: int, crop_rgb: np.ndarray):
-        """Buffer a 112×112 RGB face crop for this track."""
+        """Buffer a 112x112 RGB face crop for this track."""
         if track_id not in self._crop_bufs:
             self._crop_bufs[track_id] = collections.deque(maxlen=LIGHT_ASD_VIDEO_FRAMES)
         gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)  # (112, 112) uint8
         self._crop_bufs[track_id].append(gray)
 
-    def run_inference(self, frame_count: int, active_track_ids: Optional[set] = None):
+    def run_inference(self, frame_count: int, active_track_ids: set | None = None):
         """Run Light-ASD on all active tracks; call once per video frame.
 
         Args:
@@ -154,10 +160,15 @@ class SpeakingDetector:
             else:
                 mfcc = mfcc[:T_audio]
 
-            visual = np.stack(crops, axis=0)   # (T, 112, 112) uint8
+            visual = np.stack(crops, axis=0)  # (T, 112, 112) uint8
             prob = self._model.predict(visual, mfcc)
             self._speaking[tid] = prob >= LIGHT_ASD_SPEAKING_THRESHOLD
-            print(f"\r[ASD] track={tid} speaking_prob={prob:.3f} {'SPEAKING' if self._speaking[tid] else '       '}", end="", flush=True)
+            label = "SPEAKING" if self._speaking[tid] else "       "
+            print(
+                f"\r[ASD] track={tid} prob={prob:.3f} {label}",
+                end="",
+                flush=True,
+            )
 
     def get_speaking(self, track_id: int) -> bool:
         """Return the latest speaking prediction for a track."""
@@ -176,23 +187,28 @@ class SpeakingDetector:
 # MFCC helper
 # ---------------------------------------------------------------------------
 
+
 def _extract_mfcc(
     audio: np.ndarray,
     sample_rate: int,
     winlen: float,
     winstep: float,
     numcep: int = 13,
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     """Return (T, 13) MFCC matrix, or None if no backend is available."""
     if _psf_mfcc is not None:
-        return _psf_mfcc(audio, samplerate=sample_rate, numcep=numcep,
-                         winlen=winlen, winstep=winstep).astype(np.float32)
+        return _psf_mfcc(
+            audio, samplerate=sample_rate, numcep=numcep, winlen=winlen, winstep=winstep
+        ).astype(np.float32)
     if _librosa is not None:
         hop = int(winstep * sample_rate)
         win = int(winlen * sample_rate)
         S = _librosa.feature.mfcc(
-            y=audio, sr=sample_rate, n_mfcc=numcep,
-            n_fft=win, hop_length=hop,
+            y=audio,
+            sr=sample_rate,
+            n_mfcc=numcep,
+            n_fft=win,
+            hop_length=hop,
         )
         return S.T.astype(np.float32)
     return None

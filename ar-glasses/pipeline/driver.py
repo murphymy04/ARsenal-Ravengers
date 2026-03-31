@@ -17,11 +17,12 @@ _AR_ROOT = Path(__file__).resolve().parent.parent
 if str(_AR_ROOT) not in sys.path:
     sys.path.insert(0, str(_AR_ROOT))
 
-from config import SAMPLE_RATE, CAMERA_FPS
+from config import CAMERA_FPS, SAMPLE_RATE
 from models import TranscriptSegment
 from pipeline.diarization import DiarizationPipeline
 
 _DIARIZATION_CACHE_DIR = _AR_ROOT / "data" / "diarization_cache"
+
 
 def _extract_frames(video_path: Path) -> tuple[list[np.ndarray], float]:
     cap = cv2.VideoCapture(str(video_path))
@@ -38,28 +39,46 @@ def _extract_frames(video_path: Path) -> tuple[list[np.ndarray], float]:
     cap.release()
     return frames, fps
 
+
 def _extract_audio_pcm(video_path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     cmd = [
-        "ffmpeg", "-i", str(video_path),
-        "-vn", "-ac", "1",
-        "-ar", str(sample_rate),
-        "-f", "f32le",
-        "-loglevel", "error",
+        "ffmpeg",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "f32le",
+        "-loglevel",
+        "error",
         "pipe:1",
     ]
     result = subprocess.run(cmd, capture_output=True, check=True)
     return np.frombuffer(result.stdout, dtype=np.float32)
 
+
 def _extract_audio_wav(video_path: Path) -> bytes:
     cmd = [
-        "ffmpeg", "-i", str(video_path),
-        "-vn", "-ac", "1", "-ar", "16000",
-        "-f", "wav",
-        "-loglevel", "error",
+        "ffmpeg",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-f",
+        "wav",
+        "-loglevel",
+        "error",
         "pipe:1",
     ]
     result = subprocess.run(cmd, capture_output=True, check=True)
     return result.stdout
+
 
 class PipelineDriver:
     def __init__(
@@ -104,31 +123,32 @@ def combine_segments(
 ) -> list[dict]:
     result = []
     for seg in transcript_segments:
-
         best_name, best_coverage = "wearer", 0.0
         seg_duration = seg.end_time - seg.start_time
 
         for sp in diarization_segments:
             overlap = min(seg.end_time, sp["end"]) - max(seg.start_time, sp["start"])
-            
+
             if overlap <= 0:
                 continue
-            
+
             coverage = overlap / seg_duration
             if coverage > best_coverage:
                 best_coverage = coverage
                 best_name = sp["name"]
-        
+
         if best_coverage < min_coverage:
             best_name = "wearer"
-        
-        result.append({
-            "speaker": best_name,
-            "text": seg.text,
-            "start": seg.start_time,
-            "end": seg.end_time,
-        })
-    
+
+        result.append(
+            {
+                "speaker": best_name,
+                "text": seg.text,
+                "start": seg.start_time,
+                "end": seg.end_time,
+            }
+        )
+
     return result
 
 
@@ -183,14 +203,16 @@ if __name__ == "__main__":
 
     db = Database()
     driver = PipelineDriver(
-        diarization=DiarizationPipeline(identity=FullIdentity(FaceEmbedder(), FaceMatcher(), db)),
+        diarization=DiarizationPipeline(
+            identity=FullIdentity(FaceEmbedder(), FaceMatcher(), db)
+        ),
         transcription=TranscriptionPipeline(),
     )
 
     for video_path in videos:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Processing: {video_path.name}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         diarization_segments, transcript_segments = driver.run(video_path)
         combined = combine_segments(diarization_segments, transcript_segments)
@@ -199,5 +221,8 @@ if __name__ == "__main__":
         for i, conv in enumerate(conversations):
             print(f"\n  Conversation {i + 1} ({len(conv)} segments)")
             for seg in conv:
-                print(f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}")
+                print(
+                    f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
+                    f"{seg['speaker']}: {seg['text']}"
+                )
             print(f"  --- end of conversation {i + 1} ---")

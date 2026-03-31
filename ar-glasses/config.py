@@ -55,9 +55,10 @@ LIGHT_ASD_INFERENCE_INTERVAL = 5     # run inference every N video frames
 LIGHT_ASD_SPEAKING_THRESHOLD = 0.25   # softmax probability above which = speaking
 
 # VAD + RMS speaker detection (used when SPEAKING_BACKEND = "vad_rms")
-VAD_THRESHOLD = 0.5                   # Silero VAD probability above which = speech
-VAD_RMS_EWMA_ALPHA = 0.3             # EWMA decay — higher adapts faster to wearer volume changes
-VAD_WEARER_RATIO = 0.5               # RMS below this fraction of EWMA = other person speaking
+VAD_THRESHOLD = 0.35                   # Silero VAD probability above which = speech
+VAD_RMS_BOUNDARY = 0.035              # RMS above this = wearer, below = other person
+VAD_RMS_EWMA_ALPHA = 0.3             # (unused for now, kept for adaptive mode later)
+VAD_WEARER_RATIO = 0.5               # (unused for now, kept for adaptive mode later)
 
 # Temporal smoothing (#9)
 TEMPORAL_SMOOTHING_FRAMES = 7   # identity history window length for majority-vote smoothing
@@ -83,6 +84,7 @@ SILENCE_THRESHOLD = 2.0  # seconds of silence before processing
 
 # Live pipeline
 LIVE_BUFFER_SECONDS = 10  # process audio/video in N-second windows
+VISION_STRIDE = 5  # process faces every Nth frame for accelerated video processing
 
 # Display
 BBOX_COLOR = (0, 255, 0)       # green

@@ -9,19 +9,19 @@ Inputs:
 ASDInference.predict() returns per-frame speaking probability in [0, 1].
 """
 
-import sys
 import urllib.request
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 # ---------------------------------------------------------------------------
 # Building blocks
 # ---------------------------------------------------------------------------
+
 
 class _AudioBlock(nn.Module):
     def __init__(self, in_ch, out_ch):
@@ -51,11 +51,15 @@ class _VisualBlock(nn.Module):
         super().__init__()
         self.relu = nn.ReLU()
         s = (1, 2, 2) if is_down else (1, 1, 1)
-        self.s_3 = nn.Conv3d(in_ch, out_ch, (1, 3, 3), stride=s, padding=(0, 1, 1), bias=False)
+        self.s_3 = nn.Conv3d(
+            in_ch, out_ch, (1, 3, 3), stride=s, padding=(0, 1, 1), bias=False
+        )
         self.bn_s_3 = nn.BatchNorm3d(out_ch, momentum=0.01, eps=1e-3)
         self.t_3 = nn.Conv3d(out_ch, out_ch, (3, 1, 1), padding=(1, 0, 0), bias=False)
         self.bn_t_3 = nn.BatchNorm3d(out_ch, momentum=0.01, eps=1e-3)
-        self.s_5 = nn.Conv3d(in_ch, out_ch, (1, 5, 5), stride=s, padding=(0, 2, 2), bias=False)
+        self.s_5 = nn.Conv3d(
+            in_ch, out_ch, (1, 5, 5), stride=s, padding=(0, 2, 2), bias=False
+        )
         self.bn_s_5 = nn.BatchNorm3d(out_ch, momentum=0.01, eps=1e-3)
         self.t_5 = nn.Conv3d(out_ch, out_ch, (5, 1, 1), padding=(2, 0, 0), bias=False)
         self.bn_t_5 = nn.BatchNorm3d(out_ch, momentum=0.01, eps=1e-3)
@@ -74,6 +78,7 @@ class _VisualBlock(nn.Module):
 # Encoders
 # ---------------------------------------------------------------------------
 
+
 class _VisualEncoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -87,18 +92,19 @@ class _VisualEncoder(nn.Module):
             if isinstance(m, nn.Conv3d):
                 nn.init.kaiming_normal_(m.weight)
             elif isinstance(m, nn.BatchNorm3d):
-                m.weight.data.fill_(1); m.bias.data.zero_()
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
     def forward(self, x):
         # x: (B, 1, T, 112, 112)
         x = self.pool1(self.block1(x))
         x = self.pool2(self.block2(x))
         x = self.block3(x)
-        x = x.transpose(1, 2)                    # (B, T, C, W, H)
+        x = x.transpose(1, 2)  # (B, T, C, W, H)
         B, T, C, W, H = x.shape
         x = x.reshape(B * T, C, W, H)
-        x = self.maxpool(x)                       # (B*T, C, 1, 1)
-        return x.view(B, T, C)                    # (B, T, 128)
+        x = self.maxpool(x)  # (B*T, C, 1, 1)
+        return x.view(B, T, C)  # (B, T, 128)
 
 
 class _AudioEncoder(nn.Module):
@@ -113,21 +119,23 @@ class _AudioEncoder(nn.Module):
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight)
             elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1); m.bias.data.zero_()
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
     def forward(self, x):
         # x: (B, 1, 13, T_audio)
         x = self.pool1(self.block1(x))
         x = self.pool2(self.block2(x))
-        x = self.block3(x)                        # (B, 128, 13, T_audio//4)
-        x = torch.mean(x, dim=2, keepdim=True)    # (B, 128, 1, T_audio//4)
-        x = x.squeeze(2).transpose(1, 2)          # (B, T_audio//4, 128)
+        x = self.block3(x)  # (B, 128, 13, T_audio//4)
+        x = torch.mean(x, dim=2, keepdim=True)  # (B, 128, 1, T_audio//4)
+        x = x.squeeze(2).transpose(1, 2)  # (B, T_audio//4, 128)
         return x
 
 
 # ---------------------------------------------------------------------------
 # BGRU classifier
 # ---------------------------------------------------------------------------
+
 
 class _BGRU(nn.Module):
     def __init__(self, ch=128):
@@ -140,7 +148,8 @@ class _BGRU(nn.Module):
             if isinstance(m, nn.GRU):
                 nn.init.kaiming_normal_(m.weight_ih_l0)
                 nn.init.kaiming_normal_(m.weight_hh_l0)
-                m.bias_ih_l0.data.zero_(); m.bias_hh_l0.data.zero_()
+                m.bias_ih_l0.data.zero_()
+                m.bias_hh_l0.data.zero_()
 
     def forward(self, x):
         x, _ = self.gru_forward(x)
@@ -155,6 +164,7 @@ class _BGRU(nn.Module):
 # ASD_Model  (matches original repo naming for weight compatibility)
 # ---------------------------------------------------------------------------
 
+
 class ASD_Model(nn.Module):
     def __init__(self):
         super().__init__()
@@ -167,21 +177,21 @@ class ASD_Model(nn.Module):
         B, T, W, H = x.shape
         x = x.view(B, 1, T, W, H)
         x = (x / 255.0 - 0.4161) / 0.1688
-        return self.visualEncoder(x)              # (B, T, 128)
+        return self.visualEncoder(x)  # (B, T, 128)
 
     def forward_audio_frontend(self, x):
         # x: (B, T_audio, 13)
-        x = x.unsqueeze(1).transpose(2, 3)        # (B, 1, 13, T_audio)
-        return self.audioEncoder(x)               # (B, T_audio//4, 128)
+        x = x.unsqueeze(1).transpose(2, 3)  # (B, 1, 13, T_audio)
+        return self.audioEncoder(x)  # (B, T_audio//4, 128)
 
     def forward_audio_visual_backend(self, x1, x2):
         # x1: audio (B, T, 128), x2: visual (B, T, 128)
         x = x1 + x2
         x = self.GRU(x)
-        return x.reshape(-1, 128)                 # (B*T, 128)
+        return x.reshape(-1, 128)  # (B*T, 128)
 
     def forward_visual_backend(self, x):
-        return x.reshape(-1, 128)                 # (B*T, 128)
+        return x.reshape(-1, 128)  # (B*T, 128)
 
     def forward(self, audioFeature, visualFeature):
         audioEmbed = self.forward_audio_frontend(audioFeature)
@@ -195,11 +205,12 @@ class ASD_Model(nn.Module):
 # Inference wrapper — includes the lossAV FC head for scoring
 # ---------------------------------------------------------------------------
 
+
 class ASDInference(nn.Module):
     """Load pretrained weights and score face crops for speaking probability."""
 
     # GitHub LFS URLs for pretrained weights (try in order)
-    _WEIGHT_URLS = [
+    _WEIGHT_URLS: ClassVar[list[str]] = [
         "https://raw.githubusercontent.com/Junhua-Liao/Light-ASD/main/weight/finetuning_TalkSet.model",
         "https://raw.githubusercontent.com/Junhua-Liao/Light-ASD/main/weight/pretrain_AVA_CVPR.model",
     ]
@@ -238,22 +249,23 @@ class ASDInference(nn.Module):
     @torch.no_grad()
     def predict(
         self,
-        visual: np.ndarray,   # (T, 112, 112) uint8 grayscale
-        audio: np.ndarray,    # (T*4, 13) float32 MFCC
+        visual: np.ndarray,  # (T, 112, 112) uint8 grayscale
+        audio: np.ndarray,  # (T*4, 13) float32 MFCC
     ) -> float:
         """Return mean speaking probability in [0, 1] for this window."""
         dev = next(self.parameters()).device
         vt = torch.from_numpy(visual).float().unsqueeze(0).to(dev)  # (1, T, 112, 112)
-        at = torch.from_numpy(audio).unsqueeze(0).float().to(dev)   # (1, T*4, 13)
-        outsAV, _ = self.model(at, vt)                               # (T, 128)
-        logits = self.lossAV(outsAV)                                 # (T, 2)
-        probs = F.softmax(logits, dim=-1)[:, 1]                      # (T,) speaking prob
+        at = torch.from_numpy(audio).unsqueeze(0).float().to(dev)  # (1, T*4, 13)
+        outsAV, _ = self.model(at, vt)  # (T, 128)
+        logits = self.lossAV(outsAV)  # (T, 2)
+        probs = F.softmax(logits, dim=-1)[:, 1]  # (T,)
         return float(probs.mean().item())
 
 
 # ---------------------------------------------------------------------------
 # Weight download helper
 # ---------------------------------------------------------------------------
+
 
 def _ensure_weights(path: Path, urls: list[str]):
     if path.exists():
@@ -263,13 +275,15 @@ def _ensure_weights(path: Path, urls: list[str]):
     last_err = None
     for url in urls:
         try:
+
             def _prog(b, bs, total):
                 if total > 0:
                     pct = min(b * bs / total * 100, 100)
                     bar = "█" * int(pct / 2) + "░" * (50 - int(pct / 2))
                     print(f"\r  [{bar}] {pct:.1f}%", end="", flush=True)
+
             urllib.request.urlretrieve(url, path, reporthook=_prog)
-            print(f"\n  Done.")
+            print("\n  Done.")
             return
         except Exception as e:
             last_err = e

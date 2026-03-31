@@ -1,11 +1,11 @@
 import asyncio
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
 
-from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
 class KnowledgeStore:
     def __init__(self):
@@ -20,9 +20,11 @@ class KnowledgeStore:
 
     def _ensure_client(self):
         if not self._ready:
+
             async def _init():
                 self._client = Graphiti(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
                 await self._client.build_indices_and_constraints()
+
             self._run(_init())
             self._ready = True
 
@@ -30,12 +32,14 @@ class KnowledgeStore:
         self._ensure_client()
 
         if reference_time is None:
-            reference_time = datetime.now(timezone.utc)
+            reference_time = datetime.now(UTC)
         elif reference_time.tzinfo is None:
-            reference_time = reference_time.replace(tzinfo=timezone.utc)
+            reference_time = reference_time.replace(tzinfo=UTC)
 
         speakers = ", ".join(dict.fromkeys(seg["speaker"] for seg in segments))
-        episode_name = f"Conversation on {reference_time.strftime('%Y-%m-%d')} — {speakers}"
+        episode_name = (
+            f"Conversation on {reference_time.strftime('%Y-%m-%d')} — {speakers}"
+        )
         episode_body = "\n".join(f"{seg['speaker']}: {seg['text']}" for seg in segments)
 
         async def _add():
@@ -62,7 +66,9 @@ class KnowledgeStore:
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
 
+
 _store: KnowledgeStore | None = None
+
 
 def save_to_memory(segments: list[dict], reference_time: datetime | None = None):
     global _store

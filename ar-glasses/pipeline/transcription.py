@@ -22,16 +22,16 @@ load_dotenv(_AR_ROOT / ".env")
 
 from models import TranscriptSegment
 
+
 class TranscriptionPipeline:
     def __init__(self):
         self._client = Groq()
 
     def run(self, audio: bytes) -> list[TranscriptSegment]:
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp_path = Path(tmp.name)
-        try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
             tmp.write(audio)
-            tmp.close()
+        try:
             with open(tmp_path, "rb") as f:
                 response = self._client.audio.transcriptions.create(
                     file=(tmp_path.name, f),
@@ -51,9 +51,9 @@ class TranscriptionPipeline:
 
     @staticmethod
     def test(segments: list[TranscriptSegment]):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Transcript: {len(segments)} segments")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for seg in segments:
             print(f"  [{seg.start_time:7.2f}s - {seg.end_time:7.2f}s]  {seg.text}")

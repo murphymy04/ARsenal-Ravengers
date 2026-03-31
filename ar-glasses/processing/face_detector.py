@@ -19,16 +19,20 @@ Note on face alignment:
 """
 
 import urllib.request
-import cv2
-import numpy as np
-import mediapipe as mp
-from typing import List
 
-from models import BoundingBox, DetectedFace
+import cv2
+import mediapipe as mp
+import numpy as np
 from config import (
-    FACE_CROP_SIZE, FACE_MIN_SIZE, SPEAKING_JAW_THRESHOLD, DATA_DIR,
-    SPEAKING_BACKEND, FACE_DETECTOR_MODEL, DETECTION_CONFIDENCE,
+    DATA_DIR,
+    DETECTION_CONFIDENCE,
+    FACE_CROP_SIZE,
+    FACE_DETECTOR_MODEL,
+    FACE_MIN_SIZE,
+    SPEAKING_BACKEND,
+    SPEAKING_JAW_THRESHOLD,
 )
+from models import BoundingBox, DetectedFace
 
 # --------------------------------------------------------------------------
 # Model files
@@ -61,11 +65,13 @@ _OPENCV_MODEL_URL = (
 _OPENCV_PROTO_PATH = DATA_DIR / "opencv_face_detector.prototxt"
 _OPENCV_MODEL_PATH = DATA_DIR / "res10_300x300_ssd.caffemodel"
 
-# Canonical eye positions in 112×112 for face alignment (ArcFace standard).
-_CANONICAL_EYES = np.float32([
-    [38.2946, 51.6963],
-    [73.5318, 51.5014],
-])
+# Canonical eye positions in 112x112 for face alignment (ArcFace standard).
+_CANONICAL_EYES = np.float32(
+    [
+        [38.2946, 51.6963],
+        [73.5318, 51.5014],
+    ]
+)
 
 
 def _ensure_model(url: str, path):
@@ -81,13 +87,16 @@ def _ensure_model(url: str, path):
 # Image-level helpers (shared by all backends)
 # --------------------------------------------------------------------------
 
+
 def _align_face(rgb, eye_right_px, eye_left_px):
     """Similarity-transform so eye centres land on ArcFace canonical positions."""
     src = np.float32([list(eye_right_px), list(eye_left_px)])
     M, _ = cv2.estimateAffinePartial2D(src, _CANONICAL_EYES)
     if M is None:
         return None
-    return cv2.warpAffine(rgb, M, (FACE_CROP_SIZE, FACE_CROP_SIZE), flags=cv2.INTER_LINEAR)
+    return cv2.warpAffine(
+        rgb, M, (FACE_CROP_SIZE, FACE_CROP_SIZE), flags=cv2.INTER_LINEAR
+    )
 
 
 def _blur_score(crop: np.ndarray) -> float:
@@ -96,21 +105,35 @@ def _blur_score(crop: np.ndarray) -> float:
 
 
 def _padded_crop(rgb, x1, y1, x2, y2) -> np.ndarray:
-    """Fallback 112×112 crop when eye keypoints are unavailable."""
+    """Fallback 112x112 crop when eye keypoints are unavailable."""
     h, w = rgb.shape[:2]
     pad_w = int((x2 - x1) * 0.2)
     pad_h = int((y2 - y1) * 0.2)
-    cx1 = max(0, x1 - pad_w); cy1 = max(0, y1 - pad_h)
-    cx2 = min(w, x2 + pad_w); cy2 = min(h, y2 + pad_h)
+    cx1 = max(0, x1 - pad_w)
+    cy1 = max(0, y1 - pad_h)
+    cx2 = min(w, x2 + pad_w)
+    cy2 = min(h, y2 + pad_h)
     return cv2.resize(rgb[cy1:cy2, cx1:cx2], (FACE_CROP_SIZE, FACE_CROP_SIZE))
 
 
-def _build_face(rgb, x1, y1, x2, y2, confidence, frame_count, timestamp,
-                eye_right_px=None, eye_left_px=None):
+def _build_face(
+    rgb,
+    x1,
+    y1,
+    x2,
+    y2,
+    confidence,
+    frame_count,
+    timestamp,
+    eye_right_px=None,
+    eye_left_px=None,
+):
     """Validate bbox, align or crop, return DetectedFace or None."""
     h, w = rgb.shape[:2]
-    x1 = max(0, int(x1)); y1 = max(0, int(y1))
-    x2 = min(w, int(x2)); y2 = min(h, int(y2))
+    x1 = max(0, int(x1))
+    y1 = max(0, int(y1))
+    x2 = min(w, int(x2))
+    y2 = min(h, int(y2))
     if x2 <= x1 or y2 <= y1:
         return None
     if (x2 - x1) < FACE_MIN_SIZE or (y2 - y1) < FACE_MIN_SIZE:
@@ -135,6 +158,7 @@ def _build_face(rgb, x1, y1, x2, y2, confidence, frame_count, timestamp,
 # FaceDetector
 # --------------------------------------------------------------------------
 
+
 class FaceDetector:
     """Detects faces and optionally estimates speaking state (FaceLandmarker).
 
@@ -143,8 +167,11 @@ class FaceDetector:
                Defaults to FACE_DETECTOR_MODEL from config.py.
     """
 
-    def __init__(self, model: str = FACE_DETECTOR_MODEL,
-                 min_confidence: float = DETECTION_CONFIDENCE):
+    def __init__(
+        self,
+        model: str = FACE_DETECTOR_MODEL,
+        min_confidence: float = DETECTION_CONFIDENCE,
+    ):
         self._model = model
         self._min_confidence = min_confidence
 
@@ -161,6 +188,7 @@ class FaceDetector:
         elif model == "full_range":
             try:
                 from mediapipe.python.solutions import face_detection as _mpfd
+
                 self._detector = _mpfd.FaceDetection(
                     model_selection=1,
                     min_detection_confidence=min_confidence,
@@ -180,7 +208,9 @@ class FaceDetector:
                 running_mode=mp.tasks.vision.RunningMode.IMAGE,
                 min_detection_confidence=min_confidence,
             )
-            self._detector = mp.tasks.vision.FaceDetector.create_from_options(detector_opts)
+            self._detector = mp.tasks.vision.FaceDetector.create_from_options(
+                detector_opts
+            )
             print("[FaceDetector] using short-range BlazeFace (Tasks API)")
 
         # FaceLandmarker — shared by all backends (speaking detection)
@@ -190,15 +220,17 @@ class FaceDetector:
             num_faces=10,
             output_face_blendshapes=True,
         )
-        self._landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(landmarker_opts)
+        self._landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(
+            landmarker_opts
+        )
         self._frame_count = 0
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def detect(self, frame: np.ndarray, timestamp: float = 0.0) -> List[DetectedFace]:
-        """Detect faces, align/crop to 112×112, score blur, estimate speaking.
+    def detect(self, frame: np.ndarray, timestamp: float = 0.0) -> list[DetectedFace]:
+        """Detect faces, align/crop to 112x112, score blur, estimate speaking.
 
         Args:
             frame: BGR image (H, W, 3) uint8.
@@ -226,11 +258,11 @@ class FaceDetector:
     # Detection backends
     # ------------------------------------------------------------------
 
-    def _detect_opencv(self, frame_bgr, rgb, w, h, timestamp) -> List[DetectedFace]:
+    def _detect_opencv(self, frame_bgr, rgb, w, h, timestamp) -> list[DetectedFace]:
         """OpenCV DNN Res10-SSD — works at any range, no eye keypoints."""
         blob = cv2.dnn.blobFromImage(frame_bgr, 1.0, (300, 300), (104, 177, 123))
         self._detector.setInput(blob)
-        dets = self._detector.forward()   # (1, 1, N, 7)
+        dets = self._detector.forward()  # (1, 1, N, 7)
         faces = []
         for i in range(dets.shape[2]):
             conf = float(dets[0, 0, i, 2])
@@ -238,8 +270,10 @@ class FaceDetector:
                 continue
             face = _build_face(
                 rgb,
-                x1=dets[0, 0, i, 3] * w, y1=dets[0, 0, i, 4] * h,
-                x2=dets[0, 0, i, 5] * w, y2=dets[0, 0, i, 6] * h,
+                x1=dets[0, 0, i, 3] * w,
+                y1=dets[0, 0, i, 4] * h,
+                x2=dets[0, 0, i, 5] * w,
+                y2=dets[0, 0, i, 6] * h,
                 confidence=conf,
                 frame_count=self._frame_count,
                 timestamp=timestamp,
@@ -249,7 +283,7 @@ class FaceDetector:
                 faces.append(face)
         return faces
 
-    def _detect_short_range(self, rgb, w, h, timestamp) -> List[DetectedFace]:
+    def _detect_short_range(self, rgb, w, h, timestamp) -> list[DetectedFace]:
         """MediaPipe Tasks API — BlazeFace short-range (≤ ~2 m)."""
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         det_result = self._detector.detect(mp_image)
@@ -259,8 +293,10 @@ class FaceDetector:
             kp = detection.keypoints
             face = _build_face(
                 rgb,
-                x1=box.origin_x, y1=box.origin_y,
-                x2=box.origin_x + box.width, y2=box.origin_y + box.height,
+                x1=box.origin_x,
+                y1=box.origin_y,
+                x2=box.origin_x + box.width,
+                y2=box.origin_y + box.height,
                 confidence=detection.categories[0].score,
                 frame_count=self._frame_count,
                 timestamp=timestamp,
@@ -271,7 +307,7 @@ class FaceDetector:
                 faces.append(face)
         return faces
 
-    def _detect_full_range(self, rgb, w, h, timestamp) -> List[DetectedFace]:
+    def _detect_full_range(self, rgb, w, h, timestamp) -> list[DetectedFace]:
         """MediaPipe Solutions API — BlazeFace full-range (≤ ~5 m)."""
         results = self._detector.process(rgb)
         faces = []
@@ -282,8 +318,10 @@ class FaceDetector:
             kps = detection.location_data.relative_keypoints
             face = _build_face(
                 rgb,
-                x1=bb.xmin * w, y1=bb.ymin * h,
-                x2=(bb.xmin + bb.width) * w, y2=(bb.ymin + bb.height) * h,
+                x1=bb.xmin * w,
+                y1=bb.ymin * h,
+                x2=(bb.xmin + bb.width) * w,
+                y2=(bb.ymin + bb.height) * h,
                 confidence=detection.score[0],
                 frame_count=self._frame_count,
                 timestamp=timestamp,
@@ -303,7 +341,7 @@ class FaceDetector:
         if not lm_result.face_landmarks or not lm_result.face_blendshapes:
             return
         for landmarks, blendshapes in zip(
-            lm_result.face_landmarks, lm_result.face_blendshapes
+            lm_result.face_landmarks, lm_result.face_blendshapes, strict=False
         ):
             cx = float(np.mean([lm.x for lm in landmarks])) * w
             cy = float(np.mean([lm.y for lm in landmarks])) * h
