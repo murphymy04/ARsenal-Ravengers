@@ -1,8 +1,10 @@
 """VAD + RMS speaker detection.
 
-Uses Silero VAD for voice activity detection and a fixed RMS boundary to
-distinguish wearer (loud, close to mic) from other speakers (quieter).
-In 1-on-1 conversations the face in frame is the other person:
+Uses Silero VAD for voice activity detection and an adaptive RMS boundary
+to distinguish wearer (loud, close to mic) from other speakers (quieter).
+The boundary tracks two EWMA running means (high/low RMS during speech)
+and sits at their midpoint — adapts automatically to different mic gains
+and recording conditions.
 
     VAD active + RMS >= boundary  →  wearer is speaking (not on camera)
     VAD active + RMS <  boundary  →  face in frame is speaking
@@ -18,6 +20,9 @@ from config import (
     DATA_DIR,
     SAMPLE_RATE,
     VAD_RMS_BOUNDARY,
+    VAD_RMS_EWMA_ALPHA,
+    VAD_RMS_SEED_HIGH_MULT,
+    VAD_RMS_SEED_LOW_MULT,
     VAD_THRESHOLD,
 )
 
@@ -27,7 +32,12 @@ _DEBUG_CSV = DATA_DIR / "vad_debug.csv"
 class VadSpeaker:
     """Drop-in replacement for SpeakingDetector using Silero VAD + RMS."""
 
-    def __init__(self, fps: float = CAMERA_FPS, debug: bool = True):
+    def __init__(
+        self,
+        fps: float = CAMERA_FPS,
+        debug: bool = True,
+        static_boundary: float | None = None,
+    ):
         self._model, _ = torch.hub.load(
             repo_or_dir="snakers4/silero-vad",
             model="silero_vad",
@@ -43,6 +53,12 @@ class VadSpeaker:
         self._frame_idx = 0
 
         self._speaking: dict[int, bool] = {}
+
+        self._static_boundary = static_boundary
+        seed = static_boundary if static_boundary is not None else VAD_RMS_BOUNDARY
+        self._rms_mean_high = seed * VAD_RMS_SEED_HIGH_MULT
+        self._rms_mean_low = seed * VAD_RMS_SEED_LOW_MULT
+        self._adaptive_boundary = seed
 
         self._debug = debug
         self._debug_file = None
@@ -87,7 +103,19 @@ class VadSpeaker:
         rms_mean = float(np.mean(rms_values)) if rms_values else 0.0
 
         if self._vad_active:
-            self._is_wearer = rms_mean >= VAD_RMS_BOUNDARY
+            self._is_wearer = rms_mean >= self._adaptive_boundary
+            if self._static_boundary is None:
+                if self._is_wearer:
+                    self._rms_mean_high += VAD_RMS_EWMA_ALPHA * (
+                        rms_mean - self._rms_mean_high
+                    )
+                else:
+                    self._rms_mean_low += VAD_RMS_EWMA_ALPHA * (
+                        rms_mean - self._rms_mean_low
+                    )
+                self._adaptive_boundary = (
+                    self._rms_mean_high + self._rms_mean_low
+                ) / 2.0
         else:
             self._is_wearer = True
 
@@ -104,7 +132,7 @@ class VadSpeaker:
                     f"{timestamp:.3f}",
                     f"{vad_max:.4f}",
                     f"{rms_mean:.6f}",
-                    f"{VAD_RMS_BOUNDARY:.6f}",
+                    f"{self._adaptive_boundary:.6f}",
                     int(self._is_wearer),
                     classification,
                 ]

@@ -56,9 +56,10 @@ LIGHT_ASD_SPEAKING_THRESHOLD = 0.25   # softmax probability above which = speaki
 
 # VAD + RMS speaker detection (used when SPEAKING_BACKEND = "vad_rms")
 VAD_THRESHOLD = 0.35                   # Silero VAD probability above which = speech
-VAD_RMS_BOUNDARY = 0.035              # RMS above this = wearer, below = other person
-VAD_RMS_EWMA_ALPHA = 0.3             # (unused for now, kept for adaptive mode later)
-VAD_WEARER_RATIO = 0.5               # (unused for now, kept for adaptive mode later)
+VAD_RMS_BOUNDARY = 0.035              # initial adaptive boundary seed
+VAD_RMS_EWMA_ALPHA = 0.3             # EWMA smoothing for adaptive RMS means
+VAD_RMS_SEED_HIGH_MULT = 2.0         # mean_high seed = boundary * this
+VAD_RMS_SEED_LOW_MULT = 0.5          # mean_low seed = boundary * this
 
 # Temporal smoothing (#9)
 TEMPORAL_SMOOTHING_FRAMES = 7   # identity history window length for majority-vote smoothing

@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import cv2
 import numpy as np
 
-from config import EMBEDDING_MODEL_NAME, MATCH_THRESHOLD, UNKNOWN_LABEL
+from config import MATCH_THRESHOLD, UNKNOWN_LABEL
 from models import Person, FaceEmbedding
 from processing.face_detector import FaceDetector
 from processing.face_embedder import FaceEmbedder
@@ -300,7 +300,7 @@ def _try_plot_roc(genuine: np.ndarray, impostor: np.ndarray, threshold: float):
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig("eval_roc.png", dpi=150)
-    print(f"  ROC curve saved → eval_roc.png")
+    print("  ROC curve saved → eval_roc.png")
     plt.show()
 
 
