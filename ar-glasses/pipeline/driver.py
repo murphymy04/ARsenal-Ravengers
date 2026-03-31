@@ -222,6 +222,7 @@ if __name__ == "__main__":
             print(f"\n  Conversation {i + 1} ({len(conv)} segments)")
             for seg in conv:
                 print(
-                    f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}"
+                    f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
+                    f"{seg['speaker']}: {seg['text']}"
                 )
             print(f"  --- end of conversation {i + 1} ---")

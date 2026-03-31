@@ -10,12 +10,15 @@ In 1-on-1 conversations the face in frame is the other person:
 """
 
 import csv
+
 import numpy as np
 import torch
-
 from config import (
-    CAMERA_FPS, SAMPLE_RATE, DATA_DIR,
-    VAD_THRESHOLD, VAD_RMS_BOUNDARY,
+    CAMERA_FPS,
+    DATA_DIR,
+    SAMPLE_RATE,
+    VAD_RMS_BOUNDARY,
+    VAD_THRESHOLD,
 )
 
 _DEBUG_CSV = DATA_DIR / "vad_debug.csv"
@@ -45,12 +48,19 @@ class VadSpeaker:
         self._debug_file = None
         self._debug_writer = None
         if debug:
-            self._debug_file = open(_DEBUG_CSV, "w", newline="")
+            self._debug_file = open(_DEBUG_CSV, "w", newline="")  # noqa: SIM115
             self._debug_writer = csv.writer(self._debug_file)
-            self._debug_writer.writerow([
-                "frame", "timestamp", "vad_prob", "rms", "boundary",
-                "is_wearer", "classification",
-            ])
+            self._debug_writer.writerow(
+                [
+                    "frame",
+                    "timestamp",
+                    "vad_prob",
+                    "rms",
+                    "boundary",
+                    "is_wearer",
+                    "classification",
+                ]
+            )
 
     def drip_audio(self, samples: np.ndarray):
         if len(samples) == 0:
@@ -66,12 +76,10 @@ class VadSpeaker:
             chunk = self._audio_acc[:512]
             self._audio_acc = self._audio_acc[512:]
 
-            prob = self._model(
-                torch.from_numpy(chunk), self._sample_rate
-            ).item()
+            prob = self._model(torch.from_numpy(chunk), self._sample_rate).item()
 
             vad_probs.append(prob)
-            rms = float(np.sqrt(np.mean(chunk ** 2)))
+            rms = float(np.sqrt(np.mean(chunk**2)))
             rms_values.append(rms)
 
         vad_max = max(vad_probs) if vad_probs else 0.0
@@ -90,15 +98,17 @@ class VadSpeaker:
 
         if self._debug and self._debug_writer:
             timestamp = self._frame_idx / self._fps
-            self._debug_writer.writerow([
-                self._frame_idx,
-                f"{timestamp:.3f}",
-                f"{vad_max:.4f}",
-                f"{rms_mean:.6f}",
-                f"{VAD_RMS_BOUNDARY:.6f}",
-                int(self._is_wearer),
-                classification,
-            ])
+            self._debug_writer.writerow(
+                [
+                    self._frame_idx,
+                    f"{timestamp:.3f}",
+                    f"{vad_max:.4f}",
+                    f"{rms_mean:.6f}",
+                    f"{VAD_RMS_BOUNDARY:.6f}",
+                    int(self._is_wearer),
+                    classification,
+                ]
+            )
 
         self._frame_idx += 1
 
