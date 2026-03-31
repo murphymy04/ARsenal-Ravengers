@@ -7,12 +7,10 @@ per-frame flicker caused by occasional mismatches.
 """
 
 from collections import Counter, deque
-from typing import List
 
 import numpy as np
-
+from config import FACE_MAX_MOVE_PX, TEMPORAL_SMOOTHING_FRAMES
 from models import DetectedFace, IdentityMatch
-from config import TEMPORAL_SMOOTHING_FRAMES, FACE_MAX_MOVE_PX
 
 
 class FaceTracker:
@@ -40,10 +38,10 @@ class FaceTracker:
 
     def update(
         self,
-        faces: List[DetectedFace],
-        raw_matches: List[IdentityMatch],
+        faces: list[DetectedFace],
+        raw_matches: list[IdentityMatch],
         frame_count: int,
-    ) -> tuple[List[IdentityMatch], List[int]]:
+    ) -> tuple[list[IdentityMatch], list[int]]:
         """Update tracks with this frame's detections and return smoothed matches.
 
         Args:
@@ -56,10 +54,10 @@ class FaceTracker:
         """
         assigned: set[int] = set()
         active_tracks: dict[int, dict] = {}
-        smoothed: List[IdentityMatch] = []
-        track_ids: List[int] = []
+        smoothed: list[IdentityMatch] = []
+        track_ids: list[int] = []
 
-        for face, match in zip(faces, raw_matches):
+        for face, match in zip(faces, raw_matches, strict=False):
             cx, cy = face.bbox.center
 
             # Find the nearest unassigned existing track within max_move_px
@@ -85,7 +83,8 @@ class FaceTracker:
                 tid = self._next_id
                 self._next_id += 1
                 track = {
-                    "cx": cx, "cy": cy,
+                    "cx": cx,
+                    "cy": cy,
                     "history": deque([match], maxlen=self._window),
                     "last_frame": frame_count,
                 }
@@ -97,7 +96,8 @@ class FaceTracker:
 
         # Retain tracks that were active this frame OR disappeared very recently
         self._tracks = {
-            tid: t for tid, t in {**self._tracks, **active_tracks}.items()
+            tid: t
+            for tid, t in {**self._tracks, **active_tracks}.items()
             if frame_count - t["last_frame"] <= self._EXPIRY_FRAMES
         }
 

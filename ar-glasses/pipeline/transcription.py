@@ -28,11 +28,10 @@ class TranscriptionPipeline:
         self._client = Groq()
 
     def run(self, audio: bytes) -> list[TranscriptSegment]:
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp_path = Path(tmp.name)
-        try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
             tmp.write(audio)
-            tmp.close()
+        try:
             with open(tmp_path, "rb") as f:
                 response = self._client.audio.transcriptions.create(
                     file=(tmp_path.name, f),

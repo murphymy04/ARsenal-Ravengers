@@ -110,7 +110,9 @@ class LivePipelineDriver:
 
         if clock_fn is None:
             stream_start = time.time()
-            clock_fn = lambda frame_idx: time.time() - stream_start
+
+            def clock_fn(frame_idx):
+                return time.time() - stream_start
 
         detector = FaceDetector()
         tracker = FaceTracker()
@@ -130,7 +132,8 @@ class LivePipelineDriver:
 
         if vision_stride > 1:
             print(
-                f"  [stride] vision every {vision_stride} frames ({fps / vision_stride:.0f} detections/s)"
+                f"  [stride] vision every {vision_stride} frames "
+                f"({fps / vision_stride:.0f} detections/s)"
             )
 
         try:
@@ -161,7 +164,7 @@ class LivePipelineDriver:
                 speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
                 window_face_counts.append(len(faces))
-                for face, match, tid in zip(faces, smoothed, track_ids, strict=False):
+                for _face, match, tid in zip(faces, smoothed, track_ids, strict=False):
                     is_speaking = speaker.get_speaking(tid)
                     if is_speaking:
                         window_speaking_frames += 1
@@ -179,7 +182,9 @@ class LivePipelineDriver:
                     n_frames = len(window_face_counts)
                     avg_faces = sum(window_face_counts) / n_frames if n_frames else 0
                     print(
-                        f"\n  [debug] {n_frames} frames, avg {avg_faces:.1f} faces/frame, {window_speaking_frames} speaking-true frames"
+                        f"\n  [debug] {n_frames} frames, "
+                        f"avg {avg_faces:.1f} faces/frame, "
+                        f"{window_speaking_frames} speaking-true frames"
                     )
                     combined, diarization = self.flush_window(
                         log, mic, window_start, timestamp
@@ -196,7 +201,9 @@ class LivePipelineDriver:
                 n_frames = len(window_face_counts)
                 avg_faces = sum(window_face_counts) / n_frames if n_frames else 0
                 print(
-                    f"\n  [debug] {n_frames} frames, avg {avg_faces:.1f} faces/frame, {window_speaking_frames} speaking-true frames"
+                    f"\n  [debug] {n_frames} frames, "
+                    f"avg {avg_faces:.1f} faces/frame, "
+                    f"{window_speaking_frames} speaking-true frames"
                 )
                 combined, diarization = self.flush_window(
                     log, mic, window_start, timestamp
@@ -252,12 +259,14 @@ class LivePipelineDriver:
         print(f"  ASD segments ({len(diarization_segments)}):")
         for seg in diarization_segments:
             print(
-                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['name']} (track {seg['track_id']})"
+                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
+                f"{seg['name']} (track {seg['track_id']})"
             )
         print(f"  Combined ({len(combined)}):")
         for seg in combined:
             print(
-                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}"
+                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
+                f"{seg['speaker']}: {seg['text']}"
             )
 
         return combined, diarization_segments
@@ -295,12 +304,14 @@ if __name__ == "__main__":
             print(f"\n  ASD segments ({len(diarization)}):")
             for seg in diarization:
                 print(
-                    f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['name']} (track {seg['track_id']})"
+                    f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
+                    f"{seg['name']} (track {seg['track_id']})"
                 )
             print(f"\n  Combined ({len(combined)}):")
             for seg in combined:
                 print(
-                    f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] {seg['speaker']}: {seg['text']}"
+                    f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] "
+                    f"{seg['speaker']}: {seg['text']}"
                 )
         else:
             from input.microphone import SimulatedMic

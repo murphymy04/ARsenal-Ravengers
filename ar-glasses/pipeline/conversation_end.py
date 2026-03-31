@@ -72,7 +72,8 @@ if __name__ == "__main__":
                 },
                 {
                     "speaker": "Person 2",
-                    "text": "I am building a smart glasses app that acts as a personal secretary.",
+                    "text": "I am building a smart glasses app that "
+                    "acts as a personal secretary.",
                 },
                 {
                     "speaker": "Person 1",
@@ -86,7 +87,8 @@ if __name__ == "__main__":
             [
                 {
                     "speaker": "Person 1",
-                    "text": "Well it was great meeting you, good luck with the project!",
+                    "text": "Well it was great meeting you, "
+                    "good luck with the project!",
                 },
                 {"speaker": "Person 2", "text": "Thanks, you too! See you around."},
                 {"speaker": "Person 1", "text": "Bye!"},

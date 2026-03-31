@@ -5,12 +5,12 @@ Loads the EdgeFace model locally (no torch.hub) and extracts
 """
 
 import sys
+
 import numpy as np
 import torch
-from torchvision import transforms
-
+from config import EDGEFACE_CHECKPOINT, EDGEFACE_ROOT, EMBEDDING_MODEL_NAME
 from models import FaceEmbedding
-from config import EDGEFACE_ROOT, EDGEFACE_CHECKPOINT, EMBEDDING_MODEL_NAME
+from torchvision import transforms
 
 
 class FaceEmbedder:
@@ -20,7 +20,7 @@ class FaceEmbedder:
         self,
         model_name: str = EMBEDDING_MODEL_NAME,
         checkpoint_path: str = str(EDGEFACE_CHECKPOINT),
-        device: str = None,
+        device: str | None = None,
     ):
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -40,10 +40,12 @@ class FaceEmbedder:
         self._model.eval()
 
         # Same preprocessing as face_demo.py
-        self._transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-        ])
+        self._transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ]
+        )
 
     def embed(self, crop: np.ndarray) -> FaceEmbedding:
         """Extract embedding from a 112x112 RGB face crop.
@@ -77,7 +79,4 @@ class FaceEmbedder:
         with torch.no_grad():
             vectors = self._model(tensors)
         vectors_np = vectors.cpu().numpy()
-        return [
-            FaceEmbedding(vector=v, model_name=self.model_name)
-            for v in vectors_np
-        ]
+        return [FaceEmbedding(vector=v, model_name=self.model_name) for v in vectors_np]

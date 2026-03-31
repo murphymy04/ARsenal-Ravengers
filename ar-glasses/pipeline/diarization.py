@@ -63,7 +63,7 @@ class DiarizationPipeline:
 
                 speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
-                for face, match, tid in zip(faces, smoothed, track_ids, strict=False):
+                for _face, match, tid in zip(faces, smoothed, track_ids, strict=False):
                     is_speaking = speaker.get_speaking(tid)
                     log.update(
                         track_id=tid,
@@ -90,7 +90,9 @@ class DiarizationPipeline:
             track_ids.add(seg["track_id"])
             dur = seg["end"] - seg["start"]
             print(
-                f"  track={seg['track_id']:2d}  {seg['start']:7.2f}s - {seg['end']:7.2f}s  ({dur:.2f}s)  {seg['name']}"
+                f"  track={seg['track_id']:2d}  "
+                f"{seg['start']:7.2f}s - {seg['end']:7.2f}s  "
+                f"({dur:.2f}s)  {seg['name']}"
             )
 
         print(f"\nDistinct tracks: {sorted(track_ids)}")
