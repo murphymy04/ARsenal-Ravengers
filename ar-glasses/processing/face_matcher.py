@@ -2,15 +2,13 @@
 
 Instead of comparing a query against every stored embedding, we precompute
 a single L2-normalised mean embedding per person when the gallery is loaded
-(#4).  This is O(n_people) per query rather than O(n_people × n_embeddings),
+(#4).  This is O(n_people) per query rather than O(n_people * n_embeddings),
 and is more robust to individual outlier embeddings.
 """
 
 import numpy as np
-from typing import List
-
-from models import FaceEmbedding, IdentityMatch, Person
 from config import MATCH_THRESHOLD, UNKNOWN_LABEL
+from models import FaceEmbedding, IdentityMatch, Person
 
 
 class FaceMatcher:
@@ -18,12 +16,12 @@ class FaceMatcher:
 
     def __init__(self, threshold: float = MATCH_THRESHOLD):
         self.threshold = threshold
-        self._gallery: List[Person] = []
+        self._gallery: list[Person] = []
         # Precomputed (person, normalised_mean_vector) pairs — rebuilt on every
         # update_gallery() call so matching is a simple dot-product loop.
-        self._means: List[tuple[Person, np.ndarray]] = []
+        self._means: list[tuple[Person, np.ndarray]] = []
 
-    def update_gallery(self, people: List[Person]):
+    def update_gallery(self, people: list[Person]):
         """Replace the gallery and recompute per-person mean embeddings."""
         self._gallery = people
         self._means = []
@@ -46,12 +44,22 @@ class FaceMatcher:
             IdentityMatch — is_known=True if the best score >= threshold.
         """
         if not self._means:
-            return IdentityMatch(person_id=None, name=UNKNOWN_LABEL, confidence=0.0, is_known=False)
+            return IdentityMatch(
+                person_id=None,
+                name=UNKNOWN_LABEL,
+                confidence=0.0,
+                is_known=False,
+            )
 
         query = embedding.vector
         qnorm = np.linalg.norm(query)
         if qnorm == 0:
-            return IdentityMatch(person_id=None, name=UNKNOWN_LABEL, confidence=0.0, is_known=False)
+            return IdentityMatch(
+                person_id=None,
+                name=UNKNOWN_LABEL,
+                confidence=0.0,
+                is_known=False,
+            )
 
         query_n = query / qnorm
         best_score = -1.0
