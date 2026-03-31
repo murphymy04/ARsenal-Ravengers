@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2
 import numpy as np
 
-from config import CAMERA_FPS, LIVE_BUFFER_SECONDS, SAMPLE_RATE, SAVE_TO_MEMORY, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND
+from config import CAMERA_FPS, LIVE_BUFFER_SECONDS, SAMPLE_RATE, SAVE_TO_MEMORY, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND, VISION_STRIDE
 from input.camera import Camera
 from input.microphone import Microphone
 from models import IdentityModule
@@ -79,7 +79,7 @@ class LivePipelineDriver:
         self.save_to_memory = SAVE_TO_MEMORY
         self.conversation_buffer: list[dict] = []
 
-    def run(self, camera: Camera, mic=None, clock_fn=None, fps: float = CAMERA_FPS) -> list[dict]:
+    def run(self, camera: Camera, mic=None, clock_fn=None, fps: float = CAMERA_FPS, vision_stride: int = 1) -> list[dict]:
         owns_mic = mic is None
         if owns_mic:
             mic = Microphone()
@@ -101,6 +101,13 @@ class LivePipelineDriver:
         window_face_counts: list[int] = []
         window_speaking_frames = 0
 
+        last_faces = []
+        last_smoothed = []
+        last_track_ids = []
+
+        if vision_stride > 1:
+            print(f"  [stride] vision every {vision_stride} frames ({fps / vision_stride:.0f} detections/s)")
+
         try:
             for frame in camera.frames():
                 timestamp = clock_fn(frame_idx)
@@ -108,12 +115,22 @@ class LivePipelineDriver:
                 chunk = mic.advance_frame()
                 speaker.drip_audio(chunk)
 
-                faces = detector.detect(frame, timestamp=timestamp)
-                raw_matches = [self.identity.identify(face, frame_idx) for face in faces]
-                smoothed, track_ids = tracker.update(faces, raw_matches, frame_idx)
+                if frame_idx % vision_stride == 0:
+                    faces = detector.detect(frame, timestamp=timestamp)
+                    raw_matches = [self.identity.identify(face, frame_idx) for face in faces]
+                    smoothed, track_ids = tracker.update(faces, raw_matches, frame_idx)
 
-                for face, tid in zip(faces, track_ids):
-                    speaker.add_crop(tid, face.crop)
+                    for face, tid in zip(faces, track_ids):
+                        speaker.add_crop(tid, face.crop)
+
+                    last_faces = faces
+                    last_smoothed = smoothed
+                    last_track_ids = track_ids
+                else:
+                    faces = last_faces
+                    smoothed = last_smoothed
+                    track_ids = last_track_ids
+
                 speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
                 window_face_counts.append(len(faces))
@@ -142,6 +159,15 @@ class LivePipelineDriver:
                     window_start = timestamp
                     window_face_counts = []
                     window_speaking_frames = 0
+
+            # Flush remaining partial window
+            if window_face_counts:
+                n_frames = len(window_face_counts)
+                avg_faces = sum(window_face_counts) / n_frames if n_frames else 0
+                print(f"\n  [debug] {n_frames} frames, avg {avg_faces:.1f} faces/frame, {window_speaking_frames} speaking-true frames")
+                combined, diarization = self.flush_window(log, mic, window_start, timestamp)
+                all_combined.extend(combined)
+                all_diarization.extend(diarization)
 
         finally:
             if self.save_to_memory and self.conversation_buffer:
@@ -216,7 +242,7 @@ if __name__ == "__main__":
         SIMULATION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_file = SIMULATION_CACHE_DIR / f"{video_path.stem}.json"
 
-        if cache_file.exists():
+        if 1==2:
             print(f"Loading simulation from cache: {cache_file.name}")
             with open(cache_file) as f:
                 cached = json.load(f)
@@ -235,7 +261,7 @@ if __name__ == "__main__":
             print(f"Simulating: {video_path.name} ({fps:.1f} fps)")
 
             audio = extract_audio_pcm(video_path)
-            sim_mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=True)
+            sim_mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
             camera = Camera(source=str(video_path))
 
             combined, diarization = driver.run(
@@ -243,6 +269,7 @@ if __name__ == "__main__":
                 mic=sim_mic,
                 clock_fn=lambda fi, f=fps: fi / f,
                 fps=fps,
+                vision_stride=VISION_STRIDE,
             )
 
             with open(cache_file, "w") as f:
