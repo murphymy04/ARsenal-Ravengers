@@ -10,7 +10,7 @@ import numpy as np
 import sounddevice as sd
 import time
 
-from config import CAMERA_FPS, SAMPLE_RATE, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND
+from config import CAMERA_FPS, SAMPLE_RATE, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND, VISION_STRIDE
 from input.microphone import SimulatedMic
 from pipeline.live import extract_audio_pcm, get_video_fps
 from pipeline.identity import NullIdentity
@@ -26,24 +26,31 @@ def _create_speaker(fps: float):
     return SpeakingDetector(fps=fps)
 
 
-def main(video_path: Path):
+def main(video_path: Path, fast: bool = False):
     fps = get_video_fps(video_path)
     audio = extract_audio_pcm(video_path)
-    mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=True)
+    mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
 
     identity = NullIdentity()
     detector = FaceDetector()
     tracker = FaceTracker()
     speaker = _create_speaker(fps)
 
-    # Start audio playback (non-blocking) — uses the same denoised+boosted audio
-    sd.play(mic.audio, samplerate=SAMPLE_RATE)
+    stride = VISION_STRIDE if fast else 1
+
+    if not fast:
+        sd.play(mic.audio, samplerate=SAMPLE_RATE)
+    else:
+        print(f"[fast] stride={stride}, audio playback disabled")
 
     cap = cv2.VideoCapture(str(video_path))
     frame_idx = 0
     paused = False
     playback_start = time.time()
     frame_delay = 1.0 / fps
+
+    last_faces = []
+    last_track_ids = []
 
     try:
         while cap.isOpened():
@@ -56,12 +63,20 @@ def main(video_path: Path):
                 chunk = mic.advance_frame()
                 speaker.drip_audio(chunk)
 
-                faces = detector.detect(frame, timestamp=timestamp)
-                raw_matches = [identity.identify(face, frame_idx) for face in faces]
-                _, track_ids = tracker.update(faces, raw_matches, frame_idx)
+                if frame_idx % stride == 0:
+                    faces = detector.detect(frame, timestamp=timestamp)
+                    raw_matches = [identity.identify(face, frame_idx) for face in faces]
+                    _, track_ids = tracker.update(faces, raw_matches, frame_idx)
 
-                for face, tid in zip(faces, track_ids):
-                    speaker.add_crop(tid, face.crop)
+                    for face, tid in zip(faces, track_ids):
+                        speaker.add_crop(tid, face.crop)
+
+                    last_faces = faces
+                    last_track_ids = track_ids
+                else:
+                    faces = last_faces
+                    track_ids = last_track_ids
+
                 speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
                 display = frame.copy()
@@ -86,11 +101,11 @@ def main(video_path: Path):
 
                 frame_idx += 1
 
-                # Sync video to real-time so audio stays aligned
-                target_time = playback_start + frame_idx * frame_delay
-                sleep_time = target_time - time.time()
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                if not fast:
+                    target_time = playback_start + frame_idx * frame_delay
+                    sleep_time = target_time - time.time()
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
 
             h, w = display.shape[:2]
             scale = min(1280 / w, 720 / h, 1.0)
@@ -114,7 +129,10 @@ def main(video_path: Path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python debug_video.py <video_path>")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    fast = "--fast" in sys.argv
+
+    if not args:
+        print("Usage: python debug_video.py [--fast] <video_path>")
         sys.exit(1)
-    main(Path(sys.argv[1]))
+    main(Path(args[0]), fast=fast)
