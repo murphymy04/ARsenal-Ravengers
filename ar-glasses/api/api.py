@@ -34,142 +34,17 @@ import cv2
 import numpy as np
 from storage.database import Database
 from models import Person
-from config import FIREBASE_CREDENTIALS, FIREBASE_PROJECT_ID
 
-try:
-    import firebase_admin
-    from firebase_admin import auth as firebase_auth, credentials
-    from firebase_admin.exceptions import FirebaseError
-except ImportError:
-    firebase_admin = None
-
-
-def _init_firebase():
-    """Initialize Firebase Admin SDK once."""
-    if not firebase_admin:
-        raise RuntimeError("firebase_admin package is required for Firebase token validation")
-    if firebase_admin._apps:
-        return
-
-    if not FIREBASE_CREDENTIALS:
-        raise RuntimeError("FIREBASE_CREDENTIALS env var is required for Firebase auth")
-
-    # support either JSON path or JSON object string
-    try:
-        if FIREBASE_CREDENTIALS.strip().startswith("{"):
-            data = FIREBASE_CREDENTIALS
-            cred = credentials.Certificate(json.loads(data))
-        else:
-            cred = credentials.Certificate(FIREBASE_CREDENTIALS)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load Firebase credentials: {exc}. "
-                          f"Make sure FIREBASE_CREDENTIALS points to a valid service account key file "
-                          f"(not firebase.json config file). Download from Firebase Console > "
-                          f"Project Settings > Service Accounts > Generate new private key.")
-
-    # Validate it's actually a service account key
-    try:
-        if FIREBASE_CREDENTIALS.strip().startswith("{"):
-            parsed = json.loads(FIREBASE_CREDENTIALS)
-        else:
-            with open(FIREBASE_CREDENTIALS, 'r') as f:
-                parsed = json.load(f)
-
-        if parsed.get('type') != 'service_account':
-            raise RuntimeError("Firebase credentials file is not a service account key. "
-                             "It appears to be a client config file. Please download the "
-                             "service account key from Firebase Console > Project Settings > "
-                             "Service Accounts > Generate new private key.")
-    except Exception as exc:
-        if "not a service account key" in str(exc):
-            raise exc
-        raise RuntimeError(f"Failed to validate Firebase credentials format: {exc}")
-
-    kwargs = {}
-    if FIREBASE_PROJECT_ID:
-        kwargs["projectId"] = FIREBASE_PROJECT_ID
-
-    firebase_admin.initialize_app(cred, kwargs)
-
-
-def _get_current_user(authorization: Optional[str] = Header(None)) -> str:
-    """Require Bearer token in Authorization header and validate against Firebase."""
-    if not authorization:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid Authorization header format. Use 'Bearer <token>'",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = parts[1]
-
-    try:
-        _init_firebase()
-        decoded = firebase_auth.verify_id_token(token)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=401,
-            detail=f"Invalid or expired token: {exc}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return decoded.get("uid")
+from api.responses import PersonResponse, UnlabeledResponse, LabelResponse
+from api.requests import LabelRequest, MergeRequest
+from api.firebase_auth import _get_current_user
 
 
 # =============================================================================
 # Request/Response Models
 # =============================================================================
 
-class PersonResponse(BaseModel):
-    """A person as returned by the API (includes metadata, not full embeddings)."""
-    person_id: int
-    name: str
-    is_labeled: bool
-    embedding_count: int
-    notes: str
-    created_at: str
-    last_seen: Optional[str]
-    thumbnail_url: Optional[str] = None  # e.g., "/api/people/42/thumbnail"
-
-    class Config:
-        from_attributes = True
-
-
-class UnlabeledResponse(BaseModel):
-    """Unlabeled cluster awaiting a name assignment."""
-    person_id: int
-    name: str  # auto-generated, e.g. "Person 42"
-    embedding_count: int
-    last_seen: Optional[str]
-    thumbnail_url: Optional[str]
-
-
-class LabelRequest(BaseModel):
-    """Assign a name to an unlabeled cluster."""
-    name: str
-
-
-class MergeRequest(BaseModel):
-    """Merge two clusters, keeping embeddings from both."""
-    keep_person_id: int
-    discard_person_id: int
-
-
-class LabelResponse(BaseModel):
-    """Response after labeling."""
-    person_id: int
-    name: str
-    is_labeled: bool
-    action: str  # "labeled" or "merged"
-    details: Optional[str] = None
+# Model classes have been moved into separate files under api/responses and api/requests.
 
 
 # =============================================================================
