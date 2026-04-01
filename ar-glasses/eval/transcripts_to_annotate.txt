@@ -93,11 +93,11 @@
 [ 48.04 -  49.04] other: Okay.
 [ 49.04 -  50.04] other: Okay.
 [ 50.05 -  52.05] wearer: Okay, I assume I have the security clearance.
-[ 52.05 -  53.05] wearer: Huh?
+[ 52.05 -  53.05] other: Huh?
 [ 53.05 -  54.05] wearer: I assume I have the security clearance.
 [ 54.05 -  57.05] other: Or just tell me what it is, like for testing.
 [ 57.05 -  60.07] other: Working on like a passive security.
-[ 60.06 -  65.06] wearer: I'm just RFID tracking for vaccine for vaccinated people.
-[ 66.08 -  68.70] other: This guy's still playing snake games with his AI rapper.
+[ 60.06 -  65.06] other: I'm just RFID tracking for vaccine for vaccinated people.
+[ 66.08 -  68.70] wearer: This guy's still playing snake games with his AI rapper.
 [ 68.70 -  70.08] other: No, no, no, no, no, no.
 [ 70.07 -  71.13] wearer: That's like...
