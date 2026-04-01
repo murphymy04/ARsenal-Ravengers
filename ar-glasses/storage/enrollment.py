@@ -39,8 +39,7 @@ class Enrollment:
         if not faces:
             return None
 
-        # Use the largest face
-        face = max(faces, key=lambda f: f.bbox.width * f.bbox.height)
+        face = max(faces, key=lambda f: f.blur_score)
         embedding = self._embedder.embed(face.crop)
 
         # Create thumbnail from the crop (convert RGB crop to BGR for storage)
@@ -62,7 +61,7 @@ class Enrollment:
             person_id if at least one face was detected, None otherwise.
         """
         embeddings: List[FaceEmbedding] = []
-        thumbnail = None
+        best_face = None
 
         for img in images:
             faces = self._detector.detect(img)
@@ -70,8 +69,10 @@ class Enrollment:
                 continue
             face = max(faces, key=lambda f: f.bbox.width * f.bbox.height)
             embeddings.append(self._embedder.embed(face.crop))
-            if thumbnail is None:
-                thumbnail = cv2.cvtColor(face.crop, cv2.COLOR_RGB2BGR)
+            if best_face is None or face.blur_score > best_face.blur_score:
+                best_face = face
+
+        thumbnail = cv2.cvtColor(best_face.crop, cv2.COLOR_RGB2BGR) if best_face else None
 
         if not embeddings:
             return None

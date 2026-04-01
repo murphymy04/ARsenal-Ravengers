@@ -85,3 +85,27 @@ class FaceMatcher:
             confidence=max(best_score, 0.0),
             is_known=False,
         )
+
+    def rank_candidates(self, embedding: FaceEmbedding) -> list[tuple[Person, float]]:
+        """Return all gallery people sorted by cosine similarity (descending).
+
+        Args:
+            embedding: query face embedding.
+
+        Returns:
+            List of (Person, score) pairs, highest score first.
+        """
+        if not self._means:
+            return []
+
+        query = embedding.vector
+        qnorm = np.linalg.norm(query)
+        if qnorm == 0:
+            return []
+
+        query_n = query / qnorm
+        scores = [
+            (person, float(np.dot(query_n, mean_n))) for person, mean_n in self._means
+        ]
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores
