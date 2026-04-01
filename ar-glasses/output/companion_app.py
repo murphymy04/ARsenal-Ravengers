@@ -9,7 +9,6 @@ Provides a dashboard for:
 Stubbed for Phase 2 implementation.
 """
 
-from config import FLASK_HOST, FLASK_PORT
 
 
 class CompanionApp:

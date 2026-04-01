@@ -45,3 +45,10 @@ await graph.driver.execute_query(
 - Embedder: `graph.embedder` (instance of the OpenAI embedder)
 - Entity node class: `graphiti_core.nodes.EntityNode`
 - Embedding generation method: `EntityNode.generate_name_embedding(embedder)`
+
+## 5. Adaptive boundary algorithm
+
+ - Since we are using different microphones for testing and rooms with different noise levels we want the rms boundary to be adaptive
+ - There are a few clever ways that are simple that we can do this but they seem to be a bit tricky
+ - Parking it for now but will need to come back later
+ - The code for this is in `vad_speaker.py`

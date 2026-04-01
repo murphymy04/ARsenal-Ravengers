@@ -1,0 +1,103 @@
+=== timur_myles_2 ===
+[  0.00 -   1.54] wearer: All right, what's good, Miles?
+[  1.68 -   2.18] wearer: Number three.
+[  2.76 -   3.34] other: I'm doing good.
+[  3.60 -   4.68] other: Kind of the same stuff.
+[  5.36 -   6.84] other: I'm now looking at, well.
+[  7.16 -   8.82] wearer: He's looking at the ImmoGo glasses.
+[  9.00 -   9.90] other: ImmoGo and see.
+[ 10.00 -  11.88] other: Maybe we should have bought that one, maybe?
+[ 12.22 -  13.58] other: Yeah, but they're down released.
+[ 13.92 -  14.90] other: They don't have the camera.
+[ 15.26 -  15.60] wearer: I see.
+[ 16.10 -  17.62] other: The biggest downside, for sure.
+[ 17.78 -  20.00] other: They have the display and, I guess, better microphone, but...
+[ 20.00 -  21.92] other: If we don't have a camera, it doesn't matter.
+[ 22.14 -  25.54] wearer: Yeah, can you say a sentence on what problem we're running into
+[ 25.54 -  27.70] wearer: with our current setup?
+[ 28.00 -  30.00] other: Oh, yeah. I mean, with the microphone, it seems,
+[ 30.00 -  35.58] other: like it's detecting or it's recording the user's like audio well,
+[ 35.68 -  37.16] other: but not the other person's.
+[ 37.96 -  39.18] other: The transcript is not working.
+[ 39.54 -  40.00] other: So it's like,
+[ 40.00 -  41.30] wearer: The Chancellor?
+
+=== timur_peter ===
+[  0.00 -   2.00] wearer: Alright, yeah, we're good.
+[  2.00 -   4.00] wearer: What's up, Peter? You want to tell me what you're working on?
+[  4.00 -   7.00] other: Yeah, yeah, so right now I'm working on Blizzard.
+[  7.00 -  10.04] other: I'm working on the Overwatch game.
+[ 10.01 -  14.91] other: they gave me a promotion, so I might be able to give you a referral.
+[ 15.07 -  15.59] other: Would you be interested?
+[ 16.63 -  16.99] wearer: Sure.
+[ 17.47 -  18.15] wearer: I'll take it.
+[ 18.67 -  19.99] wearer: Do I have to move across the world?
+[ 20.01 -  30.01] other: Yeah, so we're stationed in Afghanistan right now, and we have three other centers in Antarctica,
+[ 30.02 -  35.02] wearer: I see. Is the Antarctica for keeping the servers cool so you don't have to spend so much money on cooling?
+[ 35.02 -  39.02] other: Exactly. So we're using a safeguard like LLM to collect easy data.
+[ 39.02 -  40.02] wearer: Okay.
+[ 40.03 -  41.03] other: and all that.
+[ 43.03 -  46.03] other: So, you know, what kind of base out are you looking at?
+[ 46.03 -  48.03] wearer: I don't know, I think $10 a minute.
+[ 48.03 -  50.03] wearer: No, $10 an hour.
+[ 50.03 -  51.37] other: I mean, it's kind of crazy.
+[ 51.77 -  52.31] other: $10 an hour.
+[ 52.45 -  52.85] other: That was good.
+[ 53.41 -  54.19] other: We can work with that.
+[ 54.31 -  56.49] other: I think maybe, like, you can work up to it, actually.
+[ 56.89 -  59.13] other: Let's start you off, like, $1 an hour, and then we can...
+[ 59.13 -  60.01] other: I can talk to upper managers.
+[ 60.04 -  62.22] wearer: Yeah, I'm cool with that.
+[ 62.58 -  63.18] wearer: Thank you, Peter.
+[ 63.32 -  64.06] wearer: We'll talk later.
+[ 64.20 -  64.94] other: Okay, of course.
+[ 65.02 -  65.26] other: Thank you.
+[ 65.48 -  65.68] wearer: Bye.
+[ 65.90 -  66.16] wearer: All right.
+
+=== timur_will ===
+[  0.00 -   3.00] wearer: Alright, what's up Will? How's it going?
+[  3.00 -   6.00] wearer: I wanted to ask you what you're working on and how it's going.
+[  6.00 -  10.04] other: You see, I'm freeloading. I'm freeloading on a project.
+[ 10.01 -  11.01] wearer: I'm free loading on the project.
+[ 11.01 -  12.01] other: I'm getting everyone to do everything for me.
+[ 12.01 -  13.01] wearer: I see.
+[ 13.01 -  14.01] other: And you're not doing anything yourself?
+[ 14.01 -  15.01] other: Yeah.
+[ 15.01 -  16.01] other: I see.
+[ 16.01 -  17.01] wearer: What have you been doing?
+[ 17.01 -  18.03] wearer: Because you've been to every meeting, but you haven't done anything.
+[ 18.03 -  19.03] other: I've been to every meeting.
+[ 19.03 -  20.03] other: I've been to every meeting.
+[ 20.02 -  27.26] other: I sit there, I have my coffee break, and I listen to other's ideas and I nod, pretend
+[ 27.26 -  28.26] other: to know that I'm following.
+[ 28.26 -  30.04] wearer: But you're not following.
+[ 30.03 -  31.03] other: Debatable.
+[ 31.03 -  32.03] other: I see.
+[ 32.03 -  33.03] other: Yeah.
+[ 33.03 -  34.03] other: Okay.
+[ 34.03 -  35.03] wearer: Interesting.
+[ 35.03 -  36.03] wearer: What are you doing right now?
+[ 36.03 -  37.03] wearer: What's on your screen?
+[ 37.03 -  38.03] other: What's on my screen?
+[ 38.03 -  39.05] other: Oh, you want to look at my Twitter.
+[ 39.05 -  40.05] wearer: I don't want to look at it.
+[ 40.04 -  41.04] other: Don't look at it.
+[ 41.04 -  42.04] other: Good.
+[ 42.04 -  43.04] wearer: Good.
+[ 43.04 -  44.04] wearer: Okay.
+[ 44.04 -  45.04] wearer: Good.
+[ 45.04 -  46.04] wearer: So you're not going to tell me what's on there?
+[ 46.04 -  47.04] other: No, I'm working on a top secret project.
+[ 47.04 -  48.04] other: We actually need security clearance.
+[ 48.04 -  49.04] other: Okay.
+[ 49.04 -  50.04] other: Okay.
+[ 50.05 -  52.05] wearer: Okay, I assume I have the security clearance.
+[ 52.05 -  53.05] other: Huh?
+[ 53.05 -  54.05] wearer: I assume I have the security clearance.
+[ 54.05 -  57.05] other: Or just tell me what it is, like for testing.
+[ 57.05 -  60.07] other: Working on like a passive security.
+[ 60.06 -  65.06] other: I'm just RFID tracking for vaccine for vaccinated people.
+[ 66.08 -  68.70] wearer: This guy's still playing snake games with his AI rapper.
+[ 68.70 -  70.08] other: No, no, no, no, no, no.
+[ 70.07 -  71.13] wearer: That's like...

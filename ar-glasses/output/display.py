@@ -6,7 +6,7 @@ using OpenCV drawing primitives.
 
 import cv2
 import numpy as np
-from typing import List, Tuple
+from typing import List
 
 from models import DetectedFace, IdentityMatch
 from config import (
