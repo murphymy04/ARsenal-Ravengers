@@ -196,7 +196,9 @@ def _create_win_pipe():
 
 def _win_pipe_relay(handle, ffmpeg_stdin, scrcpy_proc):
     """Block until scrcpy connects, then relay pipe bytes to ffmpeg stdin."""
-    import win32pipe, win32file, pywintypes
+    import win32pipe
+    import win32file
+    import pywintypes
     win32pipe.ConnectNamedPipe(handle, None)
     try:
         while scrcpy_proc.poll() is None:

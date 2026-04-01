@@ -37,8 +37,8 @@ ax.fill_between(df["timestamp"], 0, 0.05, where=vad_active, color="darkorange", 
 rms_norm = df["rms"] / df["rms"].max() if df["rms"].max() > 0 else df["rms"]
 ax.plot(df["timestamp"], rms_norm, color="steelblue", linewidth=0.7, alpha=0.7, label="RMS (normalized)")
 if "boundary" in df.columns:
-    boundary_norm = df["boundary"].iloc[0] / df["rms"].max() if df["rms"].max() > 0 else 0
-    ax.axhline(y=boundary_norm, color="red", linestyle="--", linewidth=1, label=f"RMS boundary (norm'd)")
+    boundary_norm = df["boundary"] / df["rms"].max() if df["rms"].max() > 0 else df["boundary"] * 0
+    ax.plot(df["timestamp"], boundary_norm, color="red", linestyle="--", linewidth=1, label="adaptive boundary (norm'd)")
 ax.set_ylabel("norm amplitude")
 ax.set_title("VAD + RMS combined")
 ax.legend(loc="upper right", fontsize=8)
@@ -58,7 +58,7 @@ if audio is not None:
 ax = axes[panel]; panel += 1
 ax.plot(df["timestamp"], df["rms"], alpha=0.6, linewidth=0.8, label="raw RMS")
 if "boundary" in df.columns:
-    ax.axhline(y=df["boundary"].iloc[0], color="red", linestyle="--", linewidth=1.5, label=f"boundary ({df['boundary'].iloc[0]:.3f})")
+    ax.plot(df["timestamp"], df["boundary"], color="red", linestyle="--", linewidth=1.5, label="adaptive boundary")
 elif "rms_ewma" in df.columns:
     ax.plot(df["timestamp"], df["rms_ewma"], color="red", linewidth=1.5, label="EWMA")
 ax.set_ylabel("amplitude")

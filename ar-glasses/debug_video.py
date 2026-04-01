@@ -6,11 +6,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cv2
-import numpy as np
 import sounddevice as sd
 import time
 
-from config import CAMERA_FPS, SAMPLE_RATE, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND, VISION_STRIDE
+from config import SAMPLE_RATE, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND, VISION_STRIDE
 from input.microphone import SimulatedMic
 from pipeline.live import extract_audio_pcm, get_video_fps
 from pipeline.identity import NullIdentity

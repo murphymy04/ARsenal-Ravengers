@@ -9,8 +9,8 @@ import numpy as np
 from datetime import datetime
 from typing import List, Optional
 
-from models import Person, FaceEmbedding, TranscriptSegment
-from config import DB_PATH, EMBEDDING_DIM, EMBEDDING_MODEL_NAME
+from models import Person, FaceEmbedding
+from config import DB_PATH
 
 
 class Database:
