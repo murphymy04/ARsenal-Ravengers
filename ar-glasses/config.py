@@ -27,22 +27,22 @@ UNKNOWN_LABEL = "Unknown"
 
 # Unsupervised clustering
 EMBEDDING_UPDATE_INTERVAL = (
-    60  # frames between accumulating new embeddings for a recognized person
+    360  # frames between accumulating new embeddings for a recognized person
 )
 MAX_EMBEDDINGS_PER_PERSON = 20  # cap to prevent unbounded growth per person
 EMBEDDING_DIVERSITY_THRESHOLD = (
     0.15  # min cosine distance required to store a new embedding (#8)
 )
-MIN_SIGHTINGS_TO_CLUSTER = 8  # observations needed before promoting to a real cluster
-PENDING_CLUSTER_SIMILARITY = 0.25  # cosine similarity for grouping pending observations
-PENDING_EXPIRY_FRAMES = 90  # frames of absence before discarding a pending observation
+MIN_SIGHTINGS_TO_CLUSTER = 12  # observations needed before promoting to a real cluster
+PENDING_CLUSTER_SIMILARITY = 0.5  # cosine similarity for grouping pending observations
+PENDING_EXPIRY_FRAMES = 180  # frames of absence before discarding a pending observation
 MERGE_SIMILARITY_THRESHOLD = (
     0.35  # similarity above which two clusters are suggested for merging
 )
 
 # Face quality (#1, #2)
 FACE_MIN_SIZE = 20  # px — ignore detections smaller than this (width or height)
-FACE_BLUR_THRESHOLD = 15.0  # Laplacian variance — lower for H.264 compressed video
+FACE_BLUR_THRESHOLD = 70.0  # Laplacian variance — lower for H.264 compressed video
 
 # Speaking detection backend
 # Set SPEAKING_BACKEND = "light_asd" to use Light-ASD (audio-visual, more accurate).
