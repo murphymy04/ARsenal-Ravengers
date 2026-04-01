@@ -84,6 +84,12 @@ python debug_video.py --fast test_videos/clip.mp4
 Tune `VISION_STRIDE` in `config.py`. Higher = faster but less temporal resolution on face detection.
 For 1-on-1 conversations stride 3-5 is safe since faces move slowly.
 
+## Retrieval pipeline
+
+When a known face appears, an optional retrieval side-channel queries the Zep/Graphiti knowledge graph for context about that person. The diarization pipeline pushes track creation events to a queue; `pipeline/retrieval.py` consumes them, applies a per-person cooldown (`RETRIEVAL_COOLDOWN_SECONDS`), and queries Graphiti. Results are drained and printed at each flush window. Enabled via `RETRIEVAL_ENABLED=true` env var. The identity resolution step (`_resolve_identity`) is currently a stub that passes through the tracker name (e.g. "Person 8") — it will eventually do a SQLite lookup to map person_id to a labeled name.
+
+To test retrieval end-to-end, run `python test_retrieval_e2e.py` with Neo4j running. This seeds the knowledge graph by processing `timur_myles.mp4` and `timur_will.mp4` with `SAVE_TO_MEMORY=True`, then processes `myles_and_will.mp4` with retrieval enabled to verify that facts are returned when known faces are recognized.
+
 ## Key files
 
 | File | Purpose |
@@ -96,6 +102,8 @@ For 1-on-1 conversations stride 3-5 is safe since faces move slowly.
 | `processing/face_detector.py` | Face detection (3 backends) |
 | `processing/face_tracker.py` | Temporal identity smoothing |
 | `pipeline/identity.py` | NullIdentity / FullIdentity modules |
+| `pipeline/retrieval.py` | Retrieval worker (cooldown + Graphiti search) |
+| `test_retrieval_e2e.py` | E2E test: seed knowledge graph then test retrieval |
 
 ## Running
 

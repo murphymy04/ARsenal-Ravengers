@@ -10,6 +10,7 @@ swappable audio source (Microphone vs SimulatedMic) and clock function
 
 import io
 import json
+import queue
 import subprocess
 import sys
 import time
@@ -23,6 +24,8 @@ import numpy as np
 from config import (
     CAMERA_FPS,
     LIVE_BUFFER_SECONDS,
+    RETRIEVAL_COOLDOWN_SECONDS,
+    RETRIEVAL_ENABLED,
     SAMPLE_RATE,
     SAVE_TO_MEMORY,
     SIMULATION_AUDIO_GAIN,
@@ -100,7 +103,25 @@ class LivePipelineDriver:
             def clock_fn(frame_idx):
                 return time.time() - stream_start
 
-        diarization = DiarizationPipeline(identity=self.identity)
+        track_event_queue = None
+        retrieval_worker = None
+        self._retrieval_result_queue = None
+
+        if RETRIEVAL_ENABLED:
+            from pipeline.retrieval import RetrievalWorker
+
+            track_event_queue = queue.Queue()
+            self._retrieval_result_queue = queue.Queue()
+            retrieval_worker = RetrievalWorker(
+                track_event_queue,
+                self._retrieval_result_queue,
+                RETRIEVAL_COOLDOWN_SECONDS,
+            )
+            retrieval_worker.start()
+
+        diarization = DiarizationPipeline(
+            identity=self.identity, track_event_queue=track_event_queue
+        )
         diarization.open(fps)
 
         all_combined: list[dict] = []
@@ -166,6 +187,8 @@ class LivePipelineDriver:
                 from pipeline.knowledge import save_to_memory
 
                 save_to_memory(self.conversation_buffer)
+            if retrieval_worker:
+                retrieval_worker.stop()
             diarization.close()
             if owns_mic:
                 mic.close()
@@ -216,6 +239,16 @@ class LivePipelineDriver:
                 f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
                 f"{seg['speaker']}: {seg['text']}"
             )
+
+        if self._retrieval_result_queue:
+            from pipeline.retrieval import drain_results
+
+            for person_name, _person_id, facts in drain_results(
+                self._retrieval_result_queue
+            ):
+                print(f"\n  [retrieval] {person_name}: {len(facts)} facts")
+                for fact in facts:
+                    print(f"    - {fact}")
 
         return combined, diarization_segments
 

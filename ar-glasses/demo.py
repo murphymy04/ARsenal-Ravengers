@@ -35,7 +35,9 @@ import streamlit as st
 from config import (
     DB_PATH,
     PENDING_EXPIRY_FRAMES,
-    SPEAKING_BACKEND, LIVE_BUFFER_SECONDS, SAMPLE_RATE,
+    SPEAKING_BACKEND,
+    LIVE_BUFFER_SECONDS,
+    SAMPLE_RATE,
 )
 from input.camera import Camera
 from input.microphone import Microphone
@@ -49,6 +51,7 @@ from main import _maybe_store_embedding, _update_pending
 
 try:
     from pipeline.transcription import TranscriptionPipeline
+
     _TRANSCRIPTION_AVAILABLE = True
 except Exception as _e:
     _TRANSCRIPTION_AVAILABLE = False
@@ -61,9 +64,20 @@ except Exception as _e:
 
 # Whisper hallucinates these phrases on silence — filter them out
 _HALLUCINATIONS = {
-    "thank you.", "thank you", "thanks.", "thanks", "you.",
-    ".", "..", "...", "bye.", "bye", "you", "okay.",
+    "thank you.",
+    "thank you",
+    "thanks.",
+    "thanks",
+    "you.",
+    ".",
+    "..",
+    "...",
+    "bye.",
+    "bye",
+    "you",
+    "okay.",
 }
+
 
 def _pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
     pcm16 = (samples * 32767).clip(-32768, 32767).astype(np.int16)
@@ -79,6 +93,7 @@ def _pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
 # ---------------------------------------------------------------------------
 # Shared state
 # ---------------------------------------------------------------------------
+
 
 class PipelineState:
     def __init__(self):
@@ -114,7 +129,9 @@ class PipelineState:
         with self._lock:
             return (
                 self.raw_frame.copy() if self.raw_frame is not None else None,
-                self.annotated_frame.copy() if self.annotated_frame is not None else None,
+                self.annotated_frame.copy()
+                if self.annotated_frame is not None
+                else None,
                 list(self.current_faces),
                 list(self.detection_log),
                 list(self.transcript),
@@ -127,8 +144,13 @@ class PipelineState:
 # Background pipeline thread
 # ---------------------------------------------------------------------------
 
-def _recognition_thread(state: PipelineState, camera_source, mic_device: Optional[int],
-                        ipwebcam_url: str = "http://localhost:8080/video"):
+
+def _recognition_thread(
+    state: PipelineState,
+    camera_source,
+    mic_device: Optional[int],
+    ipwebcam_url: str = "http://localhost:8080/video",
+):
     try:
         state.status = "Loading face detector…"
         db = Database()
@@ -148,9 +170,11 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
         state.status = "Starting camera…"
         if camera_source == "android":
             from input.android_camera import AndroidCamera
+
             camera = AndroidCamera()
         elif camera_source == "ipwebcam":
             from input.android_camera import IPWebcamCamera
+
             camera = IPWebcamCamera(url=ipwebcam_url)
         else:
             camera = Camera(source=camera_source)
@@ -197,8 +221,11 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
             timestamp = time.time()
             faces = detector.detect(frame, timestamp=timestamp)
 
-            pending = [p for p in pending
-                       if frame_count - p["last_frame"] < PENDING_EXPIRY_FRAMES]
+            pending = [
+                p
+                for p in pending
+                if frame_count - p["last_frame"] < PENDING_EXPIRY_FRAMES
+            ]
 
             raw_matches, gallery_dirty = [], False
             for face in faces:
@@ -206,12 +233,21 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
                 match = matcher.match(embedding)
                 if match.is_known:
                     gallery_dirty |= _maybe_store_embedding(
-                        db, match.person_id, embedding, face,
-                        last_embedding_update, frame_count,
+                        db,
+                        match.person_id,
+                        embedding,
+                        face,
+                        last_embedding_update,
+                        frame_count,
                     )
                 else:
                     match, promoted = _update_pending(
-                        db, embedding, face, pending, last_embedding_update, frame_count,
+                        db,
+                        embedding,
+                        face,
+                        pending,
+                        last_embedding_update,
+                        frame_count,
                     )
                     gallery_dirty |= promoted
                 raw_matches.append(match)
@@ -219,7 +255,7 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
             if gallery_dirty:
                 matcher.update_gallery(db.get_all_people())
 
-            matches, track_ids = tracker.update(faces, raw_matches, frame_count)
+            matches, track_ids, _ = tracker.update(faces, raw_matches, frame_count)
 
             if speaking_det is not None:
                 for face, tid in zip(faces, track_ids):
@@ -246,20 +282,24 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
                     timestamp=rel_ts,
                 )
                 if tid not in seen_tracks:
-                    state.append_log({
-                        "time": time.strftime("%H:%M:%S"),
-                        "event": "spotted",
-                        "name": match.name,
-                        "is_known": match.is_known,
-                    })
+                    state.append_log(
+                        {
+                            "time": time.strftime("%H:%M:%S"),
+                            "event": "spotted",
+                            "name": match.name,
+                            "is_known": match.is_known,
+                        }
+                    )
                     seen_tracks[tid] = match.name
                 if face.is_speaking and tid not in speaking_tracks:
-                    state.append_log({
-                        "time": time.strftime("%H:%M:%S"),
-                        "event": "speaking",
-                        "name": match.name,
-                        "is_known": match.is_known,
-                    })
+                    state.append_log(
+                        {
+                            "time": time.strftime("%H:%M:%S"),
+                            "event": "speaking",
+                            "name": match.name,
+                            "is_known": match.is_known,
+                        }
+                    )
                     speaking_tracks.add(tid)
                 elif not face.is_speaking:
                     speaking_tracks.discard(tid)
@@ -275,7 +315,11 @@ def _recognition_thread(state: PipelineState, camera_source, mic_device: Optiona
                 if elapsed >= LIVE_BUFFER_SECONDS:
                     window_start_offset = rel_ts - elapsed
                     _flush_transcription(
-                        state, mic, window_log, transcriber, window_start_offset,
+                        state,
+                        mic,
+                        window_log,
+                        transcriber,
+                        window_start_offset,
                     )
                     window_log = SpeakingLog()
                     last_flush = time.time()
@@ -333,7 +377,7 @@ def _flush_transcription(
         return
 
     # Skip near-silent windows — Whisper hallucinates on quiet audio
-    rms = float(np.sqrt(np.mean(audio ** 2)))
+    rms = float(np.sqrt(np.mean(audio**2)))
     if rms < 0.01:
         return
 
@@ -342,8 +386,7 @@ def _flush_transcription(
         wav_bytes = _pcm_to_wav(audio)
         segments = transcriber.run(wav_bytes)
         seg_dicts = [
-            {"start": s.start_time, "end": s.end_time, "text": s.text}
-            for s in segments
+            {"start": s.start_time, "end": s.end_time, "text": s.text} for s in segments
         ]
         labeled = window_log.assign_transcript(seg_dicts)
 
@@ -375,6 +418,7 @@ def _flush_transcription(
 # Drawing helpers
 # ---------------------------------------------------------------------------
 
+
 def _draw_faces(frame: np.ndarray, faces, matches) -> np.ndarray:
     out = frame.copy()
     for face, match in zip(faces, matches):
@@ -392,14 +436,28 @@ def _draw_faces(frame: np.ndarray, faces, matches) -> np.ndarray:
             cx = (b.x1 + b.x2) // 2
             cy = b.y1
             cv2.circle(out, (cx, cy - 18), 14, (0, 255, 255), 2)
-            cv2.putText(out, "SPK", (cx - 14, cy - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+            cv2.putText(
+                out,
+                "SPK",
+                (cx - 14, cy - 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (0, 255, 255),
+                1,
+            )
 
         label = match.name
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
         cv2.rectangle(out, (b.x1, b.y1 - th - 12), (b.x1 + tw + 8, b.y1), color, -1)
-        cv2.putText(out, label, (b.x1 + 4, b.y1 - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+        cv2.putText(
+            out,
+            label,
+            (b.x1 + 4, b.y1 - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2,
+        )
     return out
 
 
@@ -408,6 +466,7 @@ def _init_speaking_detector():
         return None
     try:
         from processing.speaking_detector import SpeakingDetector
+
         return SpeakingDetector()
     except Exception as e:
         print(f"Light-ASD init failed ({e})")
@@ -437,29 +496,47 @@ st.set_page_config(page_title="ARgusEye", layout="wide", page_icon="🕶️")
 
 # Parse args (Streamlit strips `--` before the script sees sys.argv)
 _parser = argparse.ArgumentParser()
-_parser.add_argument("--camera", default="0",
-                     help="Camera source: 0 (webcam), android (scrcpy), ipwebcam (IP Webcam app)")
-_parser.add_argument("--ipwebcam-url", default="http://localhost:8080/video",
-                     help="IP Webcam MJPEG stream URL (used when --camera ipwebcam)")
-_parser.add_argument("--mic-device", type=int, default=None,
-                     help="sounddevice index for microphone (glasses USB audio)")
+_parser.add_argument(
+    "--camera",
+    default="0",
+    help="Camera source: 0 (webcam), android (scrcpy), ipwebcam (IP Webcam app)",
+)
+_parser.add_argument(
+    "--ipwebcam-url",
+    default="http://localhost:8080/video",
+    help="IP Webcam MJPEG stream URL (used when --camera ipwebcam)",
+)
+_parser.add_argument(
+    "--mic-device",
+    type=int,
+    default=None,
+    help="sounddevice index for microphone (glasses USB audio)",
+)
 _parsed, _ = _parser.parse_known_args(sys.argv[1:])
 _camera_source = (
-    "android"   if _parsed.camera == "android"   else
-    "ipwebcam"  if _parsed.camera == "ipwebcam"  else
-    int(_parsed.camera)
+    "android"
+    if _parsed.camera == "android"
+    else "ipwebcam"
+    if _parsed.camera == "ipwebcam"
+    else int(_parsed.camera)
 )
 _ipwebcam_url = _parsed.ipwebcam_url
 _mic_device = _parsed.mic_device
 
+
 # Start pipeline once per browser session.
 # Also restart if the stored state is from an older version (missing fields after hot-reload).
 def _state_is_valid(s) -> bool:
-    return (isinstance(s, PipelineState)
-            and hasattr(s, "transcript")
-            and hasattr(s, "mic_status"))
+    return (
+        isinstance(s, PipelineState)
+        and hasattr(s, "transcript")
+        and hasattr(s, "mic_status")
+    )
 
-if "pipeline_state" not in st.session_state or not _state_is_valid(st.session_state["pipeline_state"]):
+
+if "pipeline_state" not in st.session_state or not _state_is_valid(
+    st.session_state["pipeline_state"]
+):
     _state = PipelineState()
     _thread = threading.Thread(
         target=_recognition_thread,
@@ -476,7 +553,9 @@ state: PipelineState = st.session_state["pipeline_state"]
 fps_ph = st.sidebar.empty()
 mic_ph = st.sidebar.empty()
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Green box** = known person  \n**Blue box** = unknown  \n**Cyan ring** = speaking")
+st.sidebar.markdown(
+    "**Green box** = known person  \n**Blue box** = unknown  \n**Cyan ring** = speaking"
+)
 if not _TRANSCRIPTION_AVAILABLE:
     st.sidebar.warning(f"Transcription unavailable: {_TRANSCRIPTION_ERROR}")
 
@@ -539,12 +618,15 @@ while True:
                 for s in shown
             ]
             st.markdown(
-                "| Time | Speaker | Text |\n|------|---------|------|\n" + "\n".join(rows),
+                "| Time | Speaker | Text |\n|------|---------|------|\n"
+                + "\n".join(rows),
                 unsafe_allow_html=False,
             )
         else:
             if _TRANSCRIPTION_AVAILABLE:
-                st.caption(f"Waiting for speech… (flushes every {LIVE_BUFFER_SECONDS}s)")
+                st.caption(
+                    f"Waiting for speech… (flushes every {LIVE_BUFFER_SECONDS}s)"
+                )
             else:
                 st.caption("Transcription disabled — GROQ_API_KEY not set in .env")
 
