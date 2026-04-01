@@ -2,9 +2,8 @@
 
 Uses Silero VAD for voice activity detection and an adaptive RMS boundary
 to distinguish wearer (loud, close to mic) from other speakers (quieter).
-The boundary tracks two EWMA running means (high/low RMS during speech)
-and sits at their midpoint — adapts automatically to different mic gains
-and recording conditions.
+The boundary tracks a background noise floor during non-speech, then runs
+the two-mean adaptive tracker on speech RMS above that floor.
 
     VAD active + RMS >= boundary  →  wearer is speaking (not on camera)
     VAD active + RMS <  boundary  →  face in frame is speaking
@@ -12,6 +11,7 @@ and recording conditions.
 """
 
 import csv
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -21,12 +21,58 @@ from config import (
     SAMPLE_RATE,
     VAD_RMS_BOUNDARY,
     VAD_RMS_EWMA_ALPHA,
+    VAD_RMS_NOISE_FLOOR,
+    VAD_RMS_NOISE_FLOOR_ALPHA,
     VAD_RMS_SEED_HIGH_MULT,
     VAD_RMS_SEED_LOW_MULT,
     VAD_THRESHOLD,
 )
 
 _DEBUG_CSV = DATA_DIR / "vad_debug.csv"
+
+
+@dataclass
+class AdaptiveRmsState:
+    noise_floor: float
+    speech_mean_high: float
+    speech_mean_low: float
+    boundary: float
+
+
+def create_adaptive_rms_state(seed_boundary: float) -> AdaptiveRmsState:
+    seed_excess = max(0.0, seed_boundary - VAD_RMS_NOISE_FLOOR)
+    return AdaptiveRmsState(
+        noise_floor=VAD_RMS_NOISE_FLOOR,
+        speech_mean_high=seed_excess * VAD_RMS_SEED_HIGH_MULT,
+        speech_mean_low=seed_excess * VAD_RMS_SEED_LOW_MULT,
+        boundary=seed_boundary,
+    )
+
+
+def boundary_excess(state: AdaptiveRmsState) -> float:
+    return (state.speech_mean_high + state.speech_mean_low) / 2.0
+
+
+def update_noise_floor(state: AdaptiveRmsState, rms_value: float) -> None:
+    state.noise_floor += VAD_RMS_NOISE_FLOOR_ALPHA * (rms_value - state.noise_floor)
+    state.boundary = state.noise_floor + boundary_excess(state)
+
+
+def update_speech_boundary(
+    state: AdaptiveRmsState,
+    rms_value: float,
+    alpha: float,
+) -> tuple[bool, float]:
+    rms_excess = max(0.0, rms_value - state.noise_floor)
+    is_wearer = rms_excess >= boundary_excess(state)
+
+    if is_wearer:
+        state.speech_mean_high += alpha * (rms_excess - state.speech_mean_high)
+    else:
+        state.speech_mean_low += alpha * (rms_excess - state.speech_mean_low)
+
+    state.boundary = state.noise_floor + boundary_excess(state)
+    return is_wearer, rms_excess
 
 
 class VadSpeaker:
@@ -56,9 +102,8 @@ class VadSpeaker:
 
         self._static_boundary = static_boundary
         seed = static_boundary if static_boundary is not None else VAD_RMS_BOUNDARY
-        self._rms_mean_high = seed * VAD_RMS_SEED_HIGH_MULT
-        self._rms_mean_low = seed * VAD_RMS_SEED_LOW_MULT
-        self._adaptive_boundary = seed
+        self._adaptive_state = create_adaptive_rms_state(seed)
+        self._adaptive_boundary = self._adaptive_state.boundary
 
         self._debug = debug
         self._debug_file = None
@@ -72,6 +117,8 @@ class VadSpeaker:
                     "timestamp",
                     "vad_prob",
                     "rms",
+                    "noise_floor",
+                    "rms_excess",
                     "boundary",
                     "is_wearer",
                     "classification",
@@ -101,23 +148,25 @@ class VadSpeaker:
         vad_max = max(vad_probs) if vad_probs else 0.0
         self._vad_active = vad_max > VAD_THRESHOLD
         rms_mean = float(np.mean(rms_values)) if rms_values else 0.0
+        rms_excess = max(0.0, rms_mean - self._adaptive_state.noise_floor)
 
         if self._vad_active:
-            self._is_wearer = rms_mean >= self._adaptive_boundary
+            boundary = (
+                self._static_boundary
+                if self._static_boundary is not None
+                else self._adaptive_state.boundary
+            )
+            self._is_wearer = rms_mean >= boundary
             if self._static_boundary is None:
-                if self._is_wearer:
-                    self._rms_mean_high += VAD_RMS_EWMA_ALPHA * (
-                        rms_mean - self._rms_mean_high
-                    )
-                else:
-                    self._rms_mean_low += VAD_RMS_EWMA_ALPHA * (
-                        rms_mean - self._rms_mean_low
-                    )
-                self._adaptive_boundary = (
-                    self._rms_mean_high + self._rms_mean_low
-                ) / 2.0
+                self._is_wearer, rms_excess = update_speech_boundary(
+                    self._adaptive_state, rms_mean, VAD_RMS_EWMA_ALPHA
+                )
+                self._adaptive_boundary = self._adaptive_state.boundary
         else:
             self._is_wearer = True
+            if self._static_boundary is None:
+                update_noise_floor(self._adaptive_state, rms_mean)
+                self._adaptive_boundary = self._adaptive_state.boundary
 
         if self._vad_active:
             classification = "wearer" if self._is_wearer else "other"
@@ -132,6 +181,8 @@ class VadSpeaker:
                     f"{timestamp:.3f}",
                     f"{vad_max:.4f}",
                     f"{rms_mean:.6f}",
+                    f"{self._adaptive_state.noise_floor:.6f}",
+                    f"{rms_excess:.6f}",
                     f"{self._adaptive_boundary:.6f}",
                     int(self._is_wearer),
                     classification,
