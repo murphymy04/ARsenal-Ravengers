@@ -41,7 +41,7 @@ class FaceTracker:
         faces: list[DetectedFace],
         raw_matches: list[IdentityMatch],
         frame_count: int,
-    ) -> tuple[list[IdentityMatch], list[int]]:
+    ) -> tuple[list[IdentityMatch], list[int], set[int]]:
         """Update tracks with this frame's detections and return smoothed matches.
 
         Args:
@@ -50,12 +50,13 @@ class FaceTracker:
             frame_count: current frame index (used for track expiry).
 
         Returns:
-            Tuple of (smoothed IdentityMatch list, track_id list) — same order as faces.
+            Tuple of (smoothed IdentityMatch list, track_id list, new_track_ids set).
         """
         assigned: set[int] = set()
         active_tracks: dict[int, dict] = {}
         smoothed: list[IdentityMatch] = []
         track_ids: list[int] = []
+        new_track_ids: set[int] = set()
 
         for face, match in zip(faces, raw_matches, strict=False):
             cx, cy = face.bbox.center
@@ -82,6 +83,7 @@ class FaceTracker:
                 # Start a new track
                 tid = self._next_id
                 self._next_id += 1
+                new_track_ids.add(tid)
                 track = {
                     "cx": cx,
                     "cy": cy,
@@ -101,7 +103,7 @@ class FaceTracker:
             if frame_count - t["last_frame"] <= self._EXPIRY_FRAMES
         }
 
-        return smoothed, track_ids
+        return smoothed, track_ids, new_track_ids
 
 
 def _majority_vote(history: list[IdentityMatch]) -> IdentityMatch:

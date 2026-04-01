@@ -20,8 +20,10 @@ from processing.face_tracker import FaceTracker
 def _create_speaker(fps: float):
     if SPEAKING_BACKEND == "vad_rms":
         from processing.vad_speaker import VadSpeaker
+
         return VadSpeaker(fps=fps)
     from processing.speaking_detector import SpeakingDetector
+
     return SpeakingDetector(fps=fps)
 
 
@@ -65,7 +67,7 @@ def main(video_path: Path, fast: bool = False):
                 if frame_idx % stride == 0:
                     faces = detector.detect(frame, timestamp=timestamp)
                     raw_matches = [identity.identify(face, frame_idx) for face in faces]
-                    _, track_ids = tracker.update(faces, raw_matches, frame_idx)
+                    _, track_ids, _ = tracker.update(faces, raw_matches, frame_idx)
 
                     for face, tid in zip(faces, track_ids):
                         speaker.add_crop(tid, face.crop)
@@ -91,12 +93,26 @@ def main(video_path: Path, fast: bool = False):
                     if prob is not None:
                         label += f" {'SPK' if is_speaking else '   '}"
 
-                    cv2.putText(display, label, (b.x1, b.y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                    cv2.putText(
+                        display,
+                        label,
+                        (b.x1, b.y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        color,
+                        2,
+                    )
 
                 ts_label = f"{timestamp:.2f}s  frame {frame_idx}"
-                cv2.putText(display, ts_label, (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                cv2.putText(
+                    display,
+                    ts_label,
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (255, 255, 255),
+                    2,
+                )
 
                 frame_idx += 1
 
@@ -115,9 +131,9 @@ def main(video_path: Path, fast: bool = False):
 
             cv2.imshow("debug", display_resized)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if key == ord("q"):
                 break
-            elif key == ord(' '):
+            elif key == ord(" "):
                 paused = not paused
     finally:
         sd.stop()

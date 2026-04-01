@@ -30,15 +30,16 @@ def _create_speaker(fps: float):
     if SPEAKING_BACKEND == "vad_rms":
         from processing.vad_speaker import VadSpeaker
 
-        return VadSpeaker(fps=fps)
+        return VadSpeaker(fps=fps, static_boundary=0.6)
     from processing.speaking_detector import SpeakingDetector
 
     return SpeakingDetector(fps=fps)
 
 
 class DiarizationPipeline:
-    def __init__(self, identity: IdentityModule | None = None):
+    def __init__(self, identity: IdentityModule | None = None, track_event_queue=None):
         self._identity = identity or NullIdentity()
+        self._track_event_queue = track_event_queue
         self._detector: FaceDetector | None = None
         self._tracker: FaceTracker | None = None
         self._speaker = None
@@ -69,7 +70,15 @@ class DiarizationPipeline:
         if is_vision_frame:
             faces = self._detector.detect(frame, timestamp=timestamp)
             raw_matches = [self._identity.identify(face, frame_idx) for face in faces]
-            smoothed, track_ids = self._tracker.update(faces, raw_matches, frame_idx)
+            smoothed, track_ids, new_track_ids = self._tracker.update(
+                faces, raw_matches, frame_idx
+            )
+
+            if self._track_event_queue and new_track_ids:
+                for match, tid in zip(smoothed, track_ids, strict=False):
+                    if tid in new_track_ids and match.is_known:
+                        self._track_event_queue.put_nowait((tid, match, timestamp))
+
             for face, tid in zip(faces, track_ids, strict=False):
                 self._speaker.add_crop(tid, face.crop)
             self._last_faces = faces

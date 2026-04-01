@@ -26,12 +26,18 @@ import cv2
 import numpy as np
 
 from config import (
-    CAMERA_SOURCE, DB_PATH,
-    EMBEDDING_UPDATE_INTERVAL, MAX_EMBEDDINGS_PER_PERSON,
-    EMBEDDING_DIVERSITY_THRESHOLD, FACE_BLUR_THRESHOLD,
-    MIN_SIGHTINGS_TO_CLUSTER, PENDING_CLUSTER_SIMILARITY, PENDING_EXPIRY_FRAMES,
+    CAMERA_SOURCE,
+    DB_PATH,
+    EMBEDDING_UPDATE_INTERVAL,
+    MAX_EMBEDDINGS_PER_PERSON,
+    EMBEDDING_DIVERSITY_THRESHOLD,
+    FACE_BLUR_THRESHOLD,
+    MIN_SIGHTINGS_TO_CLUSTER,
+    PENDING_CLUSTER_SIMILARITY,
+    PENDING_EXPIRY_FRAMES,
     SPEAKING_BACKEND,
-    FLASK_HOST, FLASK_PORT,
+    FLASK_HOST,
+    FLASK_PORT,
 )
 from models import FaceEmbedding, IdentityMatch
 from input.camera import Camera
@@ -48,6 +54,7 @@ from output.display import Display
 # Helpers used only by the video pipeline
 # ---------------------------------------------------------------------------
 
+
 def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     """Cosine similarity in [-1, 1]. Returns 0 for zero vectors."""
     na, nb = np.linalg.norm(a), np.linalg.norm(b)
@@ -63,8 +70,7 @@ def _is_diverse(
 ) -> bool:
     """True if new_emb is at least min_distance (cosine) from all existing embeddings."""
     return all(
-        _cosine_sim(new_emb.vector, e.vector) < 1.0 - min_distance
-        for e in existing
+        _cosine_sim(new_emb.vector, e.vector) < 1.0 - min_distance for e in existing
     )
 
 
@@ -72,9 +78,11 @@ def _is_diverse(
 # Video pipeline
 # ---------------------------------------------------------------------------
 
+
 def _screen_height() -> int:
     try:
         import tkinter as tk
+
         root = tk.Tk()
         root.withdraw()
         h = root.winfo_screenheight()
@@ -117,8 +125,12 @@ def run_video_loop(
     people = db.get_all_people()
     matcher.update_gallery(people)
     labeled = sum(1 for p in people if p.is_labeled)
-    print(f"Loaded {len(people)} cluster(s) ({labeled} labeled, {len(people) - labeled} auto).")
-    print(f"New faces need {MIN_SIGHTINGS_TO_CLUSTER} consistent sightings to be clustered.")
+    print(
+        f"Loaded {len(people)} cluster(s) ({labeled} labeled, {len(people) - labeled} auto)."
+    )
+    print(
+        f"New faces need {MIN_SIGHTINGS_TO_CLUSTER} consistent sightings to be clustered."
+    )
     print("Press 'q' to quit. Recognized people will be printed to console.")
 
     speaking_log = SpeakingLog()
@@ -132,8 +144,17 @@ def run_video_loop(
 
     processor = threading.Thread(
         target=_recognition_loop,
-        args=(frame_slot, result_slot, stop_event, detector, embedder, matcher, db,
-              speaking_det, speaking_log),
+        args=(
+            frame_slot,
+            result_slot,
+            stop_event,
+            detector,
+            embedder,
+            matcher,
+            db,
+            speaking_det,
+            speaking_log,
+        ),
         daemon=True,
     )
     processor.start()
@@ -224,8 +245,7 @@ def _recognition_loop(
         faces = detector.detect(frame, timestamp=timestamp)
 
         pending = [
-            p for p in pending
-            if frame_count - p["last_frame"] < PENDING_EXPIRY_FRAMES
+            p for p in pending if frame_count - p["last_frame"] < PENDING_EXPIRY_FRAMES
         ]
 
         raw_matches = []
@@ -236,12 +256,21 @@ def _recognition_loop(
             match = matcher.match(embedding)
             if match.is_known:
                 gallery_dirty |= _maybe_store_embedding(
-                    db, match.person_id, embedding, face,
-                    last_embedding_update, frame_count,
+                    db,
+                    match.person_id,
+                    embedding,
+                    face,
+                    last_embedding_update,
+                    frame_count,
                 )
             else:
                 match, promoted = _update_pending(
-                    db, embedding, face, pending, last_embedding_update, frame_count,
+                    db,
+                    embedding,
+                    face,
+                    pending,
+                    last_embedding_update,
+                    frame_count,
                 )
                 gallery_dirty |= promoted
             raw_matches.append(match)
@@ -249,7 +278,7 @@ def _recognition_loop(
         if gallery_dirty:
             matcher.update_gallery(db.get_all_people())
 
-        matches, track_ids = tracker.update(faces, raw_matches, frame_count)
+        matches, track_ids, _ = tracker.update(faces, raw_matches, frame_count)
 
         if speaking_det is not None:
             for face, tid in zip(faces, track_ids):
@@ -279,8 +308,15 @@ def _recognition_loop(
             b = face.bbox
             color = (0, 255, 0) if match.is_known else (0, 0, 255)
             cv2.rectangle(annotated, (b.x1, b.y1), (b.x2, b.y2), color, 2)
-            cv2.putText(annotated, match.name, (b.x1, b.y1 - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            cv2.putText(
+                annotated,
+                match.name,
+                (b.x1, b.y1 - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+            )
         try:
             result_slot.get_nowait()
         except queue.Empty:
@@ -297,6 +333,7 @@ def _init_speaking_detector():
         return None
     try:
         from processing.speaking_detector import SpeakingDetector
+
         det = SpeakingDetector()
         print("Speaking detection: Light-ASD (audio-visual)")
         return det
@@ -372,30 +409,49 @@ def _update_pending(
             pending.pop(best_idx)
             print(f"\nDiscovered new face: {auto_name}")
             return IdentityMatch(
-                person_id=person_id, name=auto_name, confidence=1.0, is_known=True,
+                person_id=person_id,
+                name=auto_name,
+                confidence=1.0,
+                is_known=True,
             ), True
 
-        return IdentityMatch(person_id=None, name="Unknown", confidence=0.0, is_known=False), False
+        return IdentityMatch(
+            person_id=None, name="Unknown", confidence=0.0, is_known=False
+        ), False
 
     # No match — start a new pending cluster
-    pending.append({
-        "embeddings": [embedding],
-        "mean": embedding.vector.copy(),
-        "thumbnail": cv2.cvtColor(face.crop, cv2.COLOR_RGB2BGR),
-        "last_frame": frame_count,
-    })
-    return IdentityMatch(person_id=None, name="Unknown", confidence=0.0, is_known=False), False
+    pending.append(
+        {
+            "embeddings": [embedding],
+            "mean": embedding.vector.copy(),
+            "thumbnail": cv2.cvtColor(face.crop, cv2.COLOR_RGB2BGR),
+            "last_frame": frame_count,
+        }
+    )
+    return IdentityMatch(
+        person_id=None, name="Unknown", confidence=0.0, is_known=False
+    ), False
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="AR Glasses Prototype")
     parser.add_argument(
         "--mode",
-        choices=["run", "live", "enroll", "label", "merge", "db-info", "db-delete", "api"],
+        choices=[
+            "run",
+            "live",
+            "enroll",
+            "label",
+            "merge",
+            "db-info",
+            "db-delete",
+            "api",
+        ],
         default="run",
         help=(
             "run: live recognition (default) | "
@@ -408,21 +464,28 @@ def main():
             "api: REST API server for companion mobile app"
         ),
     )
+
     def _camera_source(val):
         if val == "android":
             return "android"
         return int(val)
 
     parser.add_argument(
-        "--camera", type=_camera_source, default=CAMERA_SOURCE,
+        "--camera",
+        type=_camera_source,
+        default=CAMERA_SOURCE,
         help="Camera source index or 'android' for ADB/scrcpy (default: 0)",
     )
     parser.add_argument(
-        "--api-host", type=str, default=FLASK_HOST,
+        "--api-host",
+        type=str,
+        default=FLASK_HOST,
         help="API server bind address (default: 0.0.0.0)",
     )
     parser.add_argument(
-        "--api-port", type=int, default=FLASK_PORT,
+        "--api-port",
+        type=int,
+        default=FLASK_PORT,
         help="API server port (default: 5000)",
     )
     args = parser.parse_args()
@@ -430,6 +493,7 @@ def main():
     # API-only mode — no camera or embedder needed
     if args.mode == "api":
         from api.api import PeopleAPI
+
         db = Database()
         try:
             api = PeopleAPI(db)
@@ -446,8 +510,12 @@ def main():
 
         db = Database()
         try:
-            {"db-info": db_info_mode, "db-delete": db_delete_mode,
-             "label": label_mode, "merge": merge_clusters_mode}[args.mode](db)
+            {
+                "db-info": db_info_mode,
+                "db-delete": db_delete_mode,
+                "label": label_mode,
+                "merge": merge_clusters_mode,
+            }[args.mode](db)
         finally:
             db.close()
         return
@@ -462,6 +530,7 @@ def main():
     try:
         if args.mode == "enroll":
             from commands.enroll import enroll_mode
+
             enroll_mode(db, detector, embedder)
         elif args.mode == "live":
             from pipeline.live import LivePipelineDriver
@@ -470,6 +539,7 @@ def main():
 
             if args.camera == "android":
                 from input.android_camera import AndroidCamera
+
                 camera = AndroidCamera()
             else:
                 camera = Camera(source=args.camera)
@@ -482,6 +552,7 @@ def main():
         else:
             if args.camera == "android":
                 from input.android_camera import AndroidCamera
+
                 camera = AndroidCamera()
             else:
                 camera = Camera(source=args.camera)
