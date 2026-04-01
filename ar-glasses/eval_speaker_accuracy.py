@@ -29,13 +29,16 @@ import pandas as pd
 
 from eval_adaptive_rms import extract_vad_rms
 from pipeline.live import extract_audio_pcm, get_video_fps
+from processing.vad_speaker import (
+    create_adaptive_rms_state,
+    update_noise_floor,
+    update_speech_boundary,
+)
 
 TEST_VIDEOS_DIR = Path(__file__).parent / "test_videos"
 ANNOTATIONS_FILE = Path(__file__).parent / "eval" / "transcripts_to_annotate.txt"
 
-SEGMENT_RE = re.compile(
-    r"\[\s*([\d.]+)\s*-\s*([\d.]+)\s*\]\s*(wearer|other)\s*:"
-)
+SEGMENT_RE = re.compile(r"\[\s*([\d.]+)\s*-\s*([\d.]+)\s*\]\s*(wearer|other)\s*:")
 
 
 @dataclass
@@ -73,27 +76,20 @@ def run_adaptive_with_params(
     df,
     seed: float,
     alpha: float,
-    high_mult: float,
-    low_mult: float,
 ):
-    rms_mean_high = seed * high_mult
-    rms_mean_low = seed * low_mult
-    boundary = seed
+    adaptive_state = create_adaptive_rms_state(seed)
 
     classifications = []
     for _, row in df.iterrows():
         if row["vad_active"]:
-            is_wearer = row["rms"] >= boundary
-            if is_wearer:
-                rms_mean_high += alpha * (row["rms"] - rms_mean_high)
-            else:
-                rms_mean_low += alpha * (row["rms"] - rms_mean_low)
-            boundary = (rms_mean_high + rms_mean_low) / 2.0
+            is_wearer, _ = update_speech_boundary(adaptive_state, row["rms"], alpha)
             classifications.append("wearer" if is_wearer else "other")
-        else:
-            classifications.append("silence")
+            continue
 
-    return classifications, boundary
+        update_noise_floor(adaptive_state, row["rms"])
+        classifications.append("silence")
+
+    return classifications, adaptive_state.boundary
 
 
 def score_against_ground_truth(
@@ -151,17 +147,13 @@ def evaluate_video(
     model,
     seed: float,
     alpha: float,
-    high_mult: float,
-    low_mult: float,
 ) -> tuple[float, int, int, list[dict], float]:
     video_path = TEST_VIDEOS_DIR / f"{video_name}.mp4"
     audio = extract_audio_pcm(video_path)
     fps = get_video_fps(video_path)
 
     df = extract_vad_rms(audio, fps, model)
-    classifications, final_boundary = run_adaptive_with_params(
-        df, seed, alpha, high_mult, low_mult
-    )
+    classifications, final_boundary = run_adaptive_with_params(df, seed, alpha)
     error_rate, errors, total, details = score_against_ground_truth(
         df, classifications, ground_truth
     )
@@ -173,8 +165,6 @@ def run_eval(
     model,
     seed: float = VAD_RMS_BOUNDARY,
     alpha: float = VAD_RMS_EWMA_ALPHA,
-    high_mult: float = VAD_RMS_SEED_HIGH_MULT,
-    low_mult: float = VAD_RMS_SEED_LOW_MULT,
     verbose: bool = True,
 ) -> float:
     total_errors = 0
@@ -182,7 +172,7 @@ def run_eval(
 
     for video_name, ground_truth in annotations.items():
         error_rate, errors, total, details, final_boundary = evaluate_video(
-            video_name, ground_truth, model, seed, alpha, high_mult, low_mult
+            video_name, ground_truth, model, seed, alpha
         )
         total_errors += errors
         total_segments += total
@@ -268,18 +258,14 @@ def run_eval_on_data(
 
 
 def classify_adaptive(df, seed, alpha, high_mult, low_mult):
-    cls, _ = run_adaptive_with_params(df, seed, alpha, high_mult, low_mult)
+    cls, _ = run_adaptive_with_params(df, seed, alpha)
     return cls
 
 
 def classify_two_pass(df, initial_seed, alpha, high_mult, low_mult):
     """First pass establishes boundary, second pass uses it as seed."""
-    _, pass1_boundary = run_adaptive_with_params(
-        df, initial_seed, alpha, high_mult, low_mult
-    )
-    cls, _ = run_adaptive_with_params(
-        df, pass1_boundary, alpha, high_mult, low_mult
-    )
+    _, pass1_boundary = run_adaptive_with_params(df, initial_seed, alpha)
+    cls, _ = run_adaptive_with_params(df, pass1_boundary, alpha)
     return cls
 
 
@@ -290,7 +276,7 @@ def classify_percentile_seed(df, alpha, high_mult, low_mult, warmup_frames=50):
         seed = speech_rms.median() if len(speech_rms) > 0 else 0.035
     else:
         seed = speech_rms.iloc[:warmup_frames].median()
-    cls, _ = run_adaptive_with_params(df, seed, alpha, high_mult, low_mult)
+    cls, _ = run_adaptive_with_params(df, seed, alpha)
     return cls
 
 
@@ -348,7 +334,7 @@ def classify_batch_seed_adaptive(df, alpha, high_mult, low_mult):
             low, high = new_low, new_high
         seed = (low + high) / 2.0
 
-    cls, _ = run_adaptive_with_params(df, seed, alpha, high_mult, low_mult)
+    cls, _ = run_adaptive_with_params(df, seed, alpha)
     return cls
 
 
@@ -374,7 +360,7 @@ def smooth_classifications(classifications: list[str], window: int) -> list[str]
 
 
 def classify_adaptive_smoothed(df, seed, alpha, high_mult, low_mult, window):
-    cls, _ = run_adaptive_with_params(df, seed, alpha, high_mult, low_mult)
+    cls, _ = run_adaptive_with_params(df, seed, alpha)
     return smooth_classifications(cls, window)
 
 
@@ -402,7 +388,6 @@ def run_adaptive_biased(df, seed, alpha, high_mult, low_mult, bias):
 
 def extract_spectral_features(audio: np.ndarray, fps: float, model) -> pd.DataFrame:
     """Extract RMS + spectral features per frame."""
-    from config import SIMULATION_AUDIO_GAIN
     from input.microphone import SimulatedMic
 
     mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
@@ -616,7 +601,11 @@ def classify_segment_level(
     classifications = ["silence"] * len(df)
 
     for gt in ground_truth:
-        mask = df["vad_active"] & (df["timestamp"] >= gt.start) & (df["timestamp"] < gt.end)
+        mask = (
+            df["vad_active"]
+            & (df["timestamp"] >= gt.start)
+            & (df["timestamp"] < gt.end)
+        )
         segment_frames = df[mask]
         if len(segment_frames) == 0:
             continue
@@ -665,7 +654,11 @@ def classify_rms_smoothed_segment_reclassify(
 
     classifications = ["silence"] * len(df)
     for gt in ground_truth:
-        mask = df["vad_active"] & (df["timestamp"] >= gt.start) & (df["timestamp"] < gt.end)
+        mask = (
+            df["vad_active"]
+            & (df["timestamp"] >= gt.start)
+            & (df["timestamp"] < gt.end)
+        )
         seg_frames = df[mask]
         if len(seg_frames) == 0:
             continue
@@ -713,7 +706,11 @@ def main():
         wearer_rms = []
         other_rms = []
         for gt in gt_segs:
-            mask = df["vad_active"] & (df["timestamp"] >= gt.start) & (df["timestamp"] < gt.end)
+            mask = (
+                df["vad_active"]
+                & (df["timestamp"] >= gt.start)
+                & (df["timestamp"] < gt.end)
+            )
             vals = df.loc[mask, "rms"].values
             if gt.speaker == "wearer":
                 wearer_rms.extend(vals)
@@ -734,7 +731,9 @@ def main():
         )
         overlap_lo = max(wearer_rms.min(), other_rms.min())
         overlap_hi = min(wearer_rms.max(), other_rms.max())
-        wearer_in_overlap = np.sum((wearer_rms >= overlap_lo) & (wearer_rms <= overlap_hi))
+        wearer_in_overlap = np.sum(
+            (wearer_rms >= overlap_lo) & (wearer_rms <= overlap_hi)
+        )
         other_in_overlap = np.sum((other_rms >= overlap_lo) & (other_rms <= overlap_hi))
         print(
             f"    overlap zone: [{overlap_lo:.4f}, {overlap_hi:.4f}] — "
@@ -744,7 +743,9 @@ def main():
         optimal_boundary = (wearer_rms.mean() + other_rms.mean()) / 2
         wearer_correct = np.sum(wearer_rms >= optimal_boundary)
         other_correct = np.sum(other_rms < optimal_boundary)
-        frame_acc = (wearer_correct + other_correct) / (len(wearer_rms) + len(other_rms))
+        frame_acc = (wearer_correct + other_correct) / (
+            len(wearer_rms) + len(other_rms)
+        )
         print(
             f"    optimal static boundary (mean of means)={optimal_boundary:.4f}, "
             f"frame accuracy={frame_acc:.1%}"
@@ -756,35 +757,40 @@ def main():
 
     print("\n--- 1. Baseline adaptive (seed=0.035) ---")
     run_eval_on_data(
-        video_data, annotations,
+        video_data,
+        annotations,
         lambda df: classify_adaptive(df, 0.035, alpha, high_mult, low_mult),
         "Baseline",
     )
 
     print("\n--- 2. Two-pass adaptive ---")
     run_eval_on_data(
-        video_data, annotations,
+        video_data,
+        annotations,
         lambda df: classify_two_pass(df, 0.035, alpha, high_mult, low_mult),
         "Two-pass",
     )
 
     print("\n--- 3. Percentile-seeded adaptive ---")
     run_eval_on_data(
-        video_data, annotations,
+        video_data,
+        annotations,
         lambda df: classify_percentile_seed(df, alpha, high_mult, low_mult),
         "Percentile-seed",
     )
 
     print("\n--- 4. Batch k-means (offline oracle) ---")
     run_eval_on_data(
-        video_data, annotations,
+        video_data,
+        annotations,
         classify_batch_kmeans,
         "Batch k-means",
     )
 
     print("\n--- 5. Batch k-means seed + adaptive ---")
     run_eval_on_data(
-        video_data, annotations,
+        video_data,
+        annotations,
         lambda df: classify_batch_seed_adaptive(df, alpha, high_mult, low_mult),
         "Batch-seed adaptive",
     )
@@ -796,7 +802,8 @@ def main():
         for seed_val in [0.02, 0.035, 0.05]:
             for a in [0.05, 0.1, 0.2]:
                 err = run_eval_on_data(
-                    video_data, annotations,
+                    video_data,
+                    annotations,
                     lambda df, w=rms_w, s=seed_val, al=a: (
                         classify_smoothed_rms_adaptive(df, w, s, al, 1.5, 0.3)
                     ),
@@ -817,9 +824,10 @@ def main():
             for hm in [1.5, 2.0, 3.0]:
                 for lm in [0.2, 0.3, 0.5]:
                     err = run_eval_on_data(
-                        video_data, annotations,
-                        lambda df, vn, gt, s=seed_val, al=a, h=hm, l=lm: (
-                            classify_segment_level(df, gt, s, al, h, l)
+                        video_data,
+                        annotations,
+                        lambda df, vn, gt, s=seed_val, al=a, h=hm, low=lm: (
+                            classify_segment_level(df, gt, s, al, h, low)
                         ),
                         f"seed={seed_val} a={a} h={hm} l={lm}",
                         verbose=False,
@@ -837,7 +845,8 @@ def main():
         for seed_val in [0.01, 0.02, 0.035, 0.05, 0.08]:
             for a in [0.05, 0.1, 0.2, 0.3]:
                 err = run_eval_on_data(
-                    video_data, annotations,
+                    video_data,
+                    annotations,
                     lambda df, vn, gt, w=rms_w, s=seed_val, al=a: (
                         classify_rms_smoothed_segment_reclassify(df, gt, w, s, al)
                     ),
