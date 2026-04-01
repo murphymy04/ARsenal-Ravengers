@@ -40,7 +40,7 @@ def _next_index(folder: Path) -> int:
 def capture(name: str, output_dir: Path, target_count: int, camera_source: int):
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Initialising camera and face detector…")
+    print("Initialising camera and face detector…")
     detector = FaceDetector()
     cap = cv2.VideoCapture(camera_source)
     if not cap.isOpened():

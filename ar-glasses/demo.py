@@ -33,13 +33,10 @@ import numpy as np
 import streamlit as st
 
 from config import (
-    CAMERA_SOURCE, DB_PATH,
-    EMBEDDING_UPDATE_INTERVAL, MAX_EMBEDDINGS_PER_PERSON,
-    EMBEDDING_DIVERSITY_THRESHOLD, FACE_BLUR_THRESHOLD,
-    MIN_SIGHTINGS_TO_CLUSTER, PENDING_CLUSTER_SIMILARITY, PENDING_EXPIRY_FRAMES,
+    DB_PATH,
+    PENDING_EXPIRY_FRAMES,
     SPEAKING_BACKEND, LIVE_BUFFER_SECONDS, SAMPLE_RATE,
 )
-from models import FaceEmbedding, IdentityMatch
 from input.camera import Camera
 from input.microphone import Microphone
 from processing.face_detector import FaceDetector
@@ -48,7 +45,7 @@ from processing.face_matcher import FaceMatcher
 from processing.face_tracker import FaceTracker
 from storage.database import Database
 from storage.speaking_log import SpeakingLog
-from main import _cosine_sim, _is_diverse, _maybe_store_embedding, _update_pending
+from main import _maybe_store_embedding, _update_pending
 
 try:
     from pipeline.transcription import TranscriptionPipeline

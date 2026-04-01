@@ -20,8 +20,6 @@ import io
 import json
 import base64
 from typing import Optional, List
-from datetime import datetime
-import os
 
 try:
     from fastapi import FastAPI, HTTPException, Body, Depends, Header
@@ -31,7 +29,6 @@ except ImportError:
     raise ImportError("FastAPI required for API. Install: pip install fastapi uvicorn python-multipart")
 
 import cv2
-import numpy as np
 from storage.database import Database
 from models import Person
 from config import FIREBASE_CREDENTIALS, FIREBASE_PROJECT_ID
@@ -375,7 +372,6 @@ class PeopleAPI:
 
 if __name__ == "__main__":
     import argparse
-    from pathlib import Path
     from config import DB_PATH, FLASK_HOST, FLASK_PORT
 
     parser = argparse.ArgumentParser(description="AR Glasses Labeling API")
