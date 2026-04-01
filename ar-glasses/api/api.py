@@ -16,37 +16,32 @@ Usage:
     # or from CLI: python -m ar-glasses.api --db data/people.db --port 5000
 """
 
-import io
-import json
 import base64
-from typing import Optional, List
+import io
 
 try:
-    from fastapi import FastAPI, HTTPException, Body, Depends, Header
+    from fastapi import FastAPI, HTTPException
     from fastapi.responses import JSONResponse, StreamingResponse
-    from pydantic import BaseModel
-except ImportError:
-    raise ImportError("FastAPI required for API. Install: pip install fastapi uvicorn python-multipart")
+except ImportError as e:
+    raise ImportError(
+        "FastAPI required for API. Install: pip install fastapi uvicorn "
+        "python-multipart"
+    ) from e
 
 import cv2
-from storage.database import Database
 from models import Person
+from storage.database import Database
 
-from api.responses import PersonResponse, UnlabeledResponse, LabelResponse
 from api.requests import LabelRequest, MergeRequest
-from api.firebase_auth import _get_current_user
+from api.responses import LabelResponse, PersonResponse, UnlabeledResponse
 
-
-# =============================================================================
-# Request/Response Models
-# =============================================================================
-
-# Model classes have been moved into separate files under api/responses and api/requests.
+# Request/Response Models are in api/responses/ and api/requests/
 
 
 # =============================================================================
 # API Implementation
 # =============================================================================
+
 
 class PeopleAPI:
     """REST API for face labeling & people management."""
@@ -57,11 +52,10 @@ class PeopleAPI:
             title="AR Glasses Labeling API",
             description="Companion app backend for labeling face clusters",
             version="1.0",
-            dependencies=[Depends(_get_current_user)],
         )
         self._setup_routes()
 
-    def _setup_routes(self):
+    def _setup_routes(self) -> None:
         """Register all API endpoints."""
 
         @self.app.get("/", tags=["health"])
@@ -69,13 +63,19 @@ class PeopleAPI:
             """Health check."""
             return {"status": "ok", "service": "ar-glasses-labeling-api"}
 
-        @self.app.get("/api/people", response_model=List[PersonResponse], tags=["people"])
+        @self.app.get(
+            "/api/people", response_model=list[PersonResponse], tags=["people"]
+        )
         def get_all_people():
-            """Get all enrolled people with metadata (including labeled and unlabeled)."""
+            """Get all enrolled people with metadata."""
             people = self.db.get_all_people()
             return [self._person_to_response(p) for p in people]
 
-        @self.app.get("/api/people/unlabeled", response_model=List[UnlabeledResponse], tags=["labeling"])
+        @self.app.get(
+            "/api/people/unlabeled",
+            response_model=list[UnlabeledResponse],
+            tags=["labeling"],
+        )
         def get_unlabeled_clusters():
             """Get only unlabeled clusters awaiting names from the mobile app."""
             people = self.db.get_all_people()
@@ -86,17 +86,23 @@ class PeopleAPI:
                     name=p.name,
                     embedding_count=len(p.embeddings),
                     last_seen=p.last_seen.isoformat() if p.last_seen else None,
-                    thumbnail_url=f"/api/people/{p.person_id}/thumbnail" if p.thumbnail is not None else None,
+                    thumbnail_url=f"/api/people/{p.person_id}/thumbnail"
+                    if p.thumbnail is not None
+                    else None,
                 )
                 for p in unlabeled
             ]
 
-        @self.app.get("/api/people/{person_id}", response_model=PersonResponse, tags=["people"])
+        @self.app.get(
+            "/api/people/{person_id}", response_model=PersonResponse, tags=["people"]
+        )
         def get_person(person_id: int):
             """Get details for a single person."""
             person = self.db.get_person(person_id)
             if not person:
-                raise HTTPException(status_code=404, detail=f"Person {person_id} not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Person {person_id} not found"
+                )
             return self._person_to_response(person)
 
         @self.app.get("/api/people/{person_id}/thumbnail", tags=["people"])
@@ -109,24 +115,34 @@ class PeopleAPI:
             """
             person = self.db.get_person(person_id)
             if not person or person.thumbnail is None:
-                raise HTTPException(status_code=404, detail=f"No thumbnail for person {person_id}")
+                raise HTTPException(
+                    status_code=404, detail=f"No thumbnail for person {person_id}"
+                )
 
             if format == "base64":
                 # Return as base64-encoded data URL for mobile app embed
                 _, buf = cv2.imencode(".jpg", person.thumbnail)
                 b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
-                return JSONResponse({
-                    "person_id": person_id,
-                    "name": person.name,
-                    "thumbnail_data_url": f"data:image/jpeg;base64,{b64}"
-                })
+                return JSONResponse(
+                    {
+                        "person_id": person_id,
+                        "name": person.name,
+                        "thumbnail_data_url": f"data:image/jpeg;base64,{b64}",
+                    }
+                )
             else:
                 # Return as JPEG stream
                 _, buf = cv2.imencode(".jpg", person.thumbnail)
-                return StreamingResponse(io.BytesIO(buf.tobytes()), media_type="image/jpeg")
+                return StreamingResponse(
+                    io.BytesIO(buf.tobytes()), media_type="image/jpeg"
+                )
 
-        @self.app.post("/api/people/{person_id}/label", response_model=LabelResponse, tags=["labeling"])
-        def label_person(person_id: int, request: LabelRequest = Body(...)):
+        @self.app.post(
+            "/api/people/{person_id}/label",
+            response_model=LabelResponse,
+            tags=["labeling"],
+        )
+        def label_person(person_id: int, request: LabelRequest):
             """Assign a name to an unlabeled cluster.
 
             If the name matches an existing person, merges the clusters.
@@ -134,12 +150,14 @@ class PeopleAPI:
             """
             person = self.db.get_person(person_id)
             if not person:
-                raise HTTPException(status_code=404, detail=f"Person {person_id} not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Person {person_id} not found"
+                )
 
             if person.is_labeled:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Person {person_id} is already labeled; cannot relabel"
+                    detail=f"Person {person_id} is already labeled; cannot relabel",
                 )
 
             name = request.name.strip()
@@ -157,7 +175,10 @@ class PeopleAPI:
                     name=existing.name,
                     is_labeled=True,
                     action="merged",
-                    details=f"Cluster {person_id} merged into existing person {existing.person_id}"
+                    details=(
+                        f"Cluster {person_id} merged into existing person "
+                        f"{existing.person_id}"
+                    ),
                 )
             else:
                 # New name: update person and mark as labeled
@@ -167,11 +188,13 @@ class PeopleAPI:
                     name=name,
                     is_labeled=True,
                     action="labeled",
-                    details=f"Cluster {person_id} labeled as '{name}'"
+                    details=f"Cluster {person_id} labeled as '{name}'",
                 )
 
-        @self.app.post("/api/people/merge", response_model=LabelResponse, tags=["admin"])
-        def merge_clusters(request: MergeRequest = Body(...)):
+        @self.app.post(
+            "/api/people/merge", response_model=LabelResponse, tags=["admin"]
+        )
+        def merge_clusters(request: MergeRequest):
             """Merge two clusters (admin tool).
 
             Keeps all embeddings from both clusters.
@@ -181,10 +204,14 @@ class PeopleAPI:
             discard = self.db.get_person(request.discard_person_id)
 
             if not keep or not discard:
-                raise HTTPException(status_code=404, detail="One or both people not found")
+                raise HTTPException(
+                    status_code=404, detail="One or both people not found"
+                )
 
             if keep.person_id == discard.person_id:
-                raise HTTPException(status_code=400, detail="Cannot merge person with themselves")
+                raise HTTPException(
+                    status_code=400, detail="Cannot merge person with themselves"
+                )
 
             self._merge_people(keep=keep, discard=discard)
             return LabelResponse(
@@ -192,7 +219,7 @@ class PeopleAPI:
                 name=keep.name,
                 is_labeled=keep.is_labeled,
                 action="merged",
-                details=f"Merged person {discard.person_id} into {keep.person_id}"
+                details=f"Merged person {discard.person_id} into {keep.person_id}",
             )
 
         @self.app.delete("/api/people/{person_id}", tags=["admin"])
@@ -200,14 +227,14 @@ class PeopleAPI:
             """Delete a person and all their embeddings (irreversible)."""
             person = self.db.get_person(person_id)
             if not person:
-                raise HTTPException(status_code=404, detail=f"Person {person_id} not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Person {person_id} not found"
+                )
 
             self.db.delete_person(person_id)
-            return JSONResponse({
-                "person_id": person_id,
-                "name": person.name,
-                "status": "deleted"
-            })
+            return JSONResponse(
+                {"person_id": person_id, "name": person.name, "status": "deleted"}
+            )
 
     def _person_to_response(self, person: Person) -> PersonResponse:
         """Convert Person dataclass to API response."""
@@ -219,17 +246,24 @@ class PeopleAPI:
             notes=person.notes,
             created_at=person.created_at.isoformat() if person.created_at else "",
             last_seen=person.last_seen.isoformat() if person.last_seen else None,
-            thumbnail_url=f"/api/people/{person.person_id}/thumbnail" if person.thumbnail is not None else None,
+            thumbnail_url=f"/api/people/{person.person_id}/thumbnail"
+            if person.thumbnail is not None
+            else None,
         )
 
-    def _merge_people(self, keep: Person, discard: Person):
+    def _merge_people(self, keep: Person, discard: Person) -> None:
         """Move all embeddings from discard → keep, then delete discard."""
         for emb in discard.embeddings:
             self.db.add_embedding(keep.person_id, emb)
         self.db.update_last_seen(keep.person_id)
         self.db.delete_person(discard.person_id)
 
-    def run(self, host: str = "0.0.0.0", port: int = 5000, reload: bool = False):
+    def run(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 5000,
+        reload: bool = False,
+    ) -> None:
         """Start the API server.
 
         Args:
@@ -238,22 +272,24 @@ class PeopleAPI:
             reload: auto-reload on code changes (dev only)
         """
         import uvicorn
+
         uvicorn.run(self.app, host=host, port=port, reload=reload)
 
 
-# =============================================================================
-# CLI Entry Point
-# =============================================================================
-
 if __name__ == "__main__":
     import argparse
+
     from config import DB_PATH, FLASK_HOST, FLASK_PORT
 
     parser = argparse.ArgumentParser(description="AR Glasses Labeling API")
-    parser.add_argument("--db", type=str, default=str(DB_PATH), help="Path to people.db")
+    parser.add_argument(
+        "--db", type=str, default=str(DB_PATH), help="Path to people.db"
+    )
     parser.add_argument("--host", type=str, default=FLASK_HOST, help="Bind address")
     parser.add_argument("--port", type=int, default=FLASK_PORT, help="Port number")
-    parser.add_argument("--reload", action="store_true", help="Auto-reload on changes (dev)")
+    parser.add_argument(
+        "--reload", action="store_true", help="Auto-reload on changes (dev)"
+    )
     args = parser.parse_args()
 
     db = Database(args.db)
