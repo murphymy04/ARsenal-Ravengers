@@ -25,6 +25,7 @@
 ### Visual Cleanliness
 - Group related code into visual blocks with one blank line between them. Use two blank lines between top-level functions/classes.
 - Imports at the top, organized: stdlib → third-party → local. Let ruff handle ordering.
+- Do not use lazy or inline imports inside functions unless there is a documented, unavoidable reason such as a hard optional dependency or import cycle. Default to top-level imports.
 - No deeply nested data transformations on one line. If a list comprehension has a condition and a nested loop, break it into a regular loop.
 
 ## Code Quality

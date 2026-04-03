@@ -3,8 +3,11 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Paths
 PROJECT_ROOT = Path(__file__).parent
+load_dotenv(PROJECT_ROOT / ".env")
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "people.db"
 EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
@@ -74,6 +77,9 @@ VAD_RMS_NOISE_FLOOR = 0.0  # initial RMS floor before room noise calibration
 VAD_RMS_NOISE_FLOOR_ALPHA = 0.05  # slow EWMA for background noise during non-speech
 VAD_RMS_SEED_HIGH_MULT = 2.0  # mean_high seed = boundary * this
 VAD_RMS_SEED_LOW_MULT = 0.5  # mean_low seed = boundary * this
+VAD_RMS_SPEECH_BUFFER = 180  # recent speech-energy samples used to fit 2 clusters
+VAD_RMS_GMM_MIN_SAMPLES = 12  # minimum speech samples before fitting a 2-Gaussian model
+VAD_RMS_RESET_SILENCE_SECONDS = 1.0  # clear speech history after this much non-speech
 
 # Temporal smoothing (#9)
 TEMPORAL_SMOOTHING_FRAMES = (
@@ -113,6 +119,16 @@ FONT_THICKNESS = 2
 # Companion app
 FLASK_HOST = "0.0.0.0"
 FLASK_PORT = 5000
+
+# Storage backend
+SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_PUBLIC_URL")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_TIMEOUT_SECONDS = float(os.getenv("SUPABASE_TIMEOUT_SECONDS", "30"))
+STORAGE_BACKEND = os.getenv(
+    "STORAGE_BACKEND",
+    "sqlite",
+)
 
 # Knowledge graph (Zep Graphiti → Neo4j)
 SAVE_TO_MEMORY = os.getenv("SAVE_TO_MEMORY", "false").lower() == "true"

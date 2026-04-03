@@ -28,6 +28,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from processing.light_asd.model import ASDInference
+
 # Resolve MFCC backend once at import time — avoids repeated import attempts per call
 try:
     from python_speech_features import mfcc as _psf_mfcc
@@ -60,9 +62,6 @@ class SpeakingDetector:
     """Audio-visual active speaker detection, updating is_speaking per track."""
 
     def __init__(self, device: str = "cpu", fps: float = CAMERA_FPS):
-        # Lazy import so the rest of the system works even if torch is absent
-        from processing.light_asd.model import ASDInference
-
         self._model = ASDInference.load(Path(LIGHT_ASD_WEIGHTS), device=device)
 
         self._fps = fps

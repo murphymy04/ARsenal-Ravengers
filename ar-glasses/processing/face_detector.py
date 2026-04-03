@@ -34,6 +34,11 @@ from config import (
 )
 from models import BoundingBox, DetectedFace
 
+try:
+    from mediapipe.python.solutions import face_detection as mp_face_detection
+except ImportError:
+    mp_face_detection = None
+
 # --------------------------------------------------------------------------
 # Model files
 # --------------------------------------------------------------------------
@@ -187,9 +192,11 @@ class FaceDetector:
 
         elif model == "full_range":
             try:
-                from mediapipe.python.solutions import face_detection as _mpfd
-
-                self._detector = _mpfd.FaceDetection(
+                if mp_face_detection is None:
+                    raise ImportError(
+                        "mediapipe.python.solutions.face_detection unavailable"
+                    )
+                self._detector = mp_face_detection.FaceDetection(
                     model_selection=1,
                     min_detection_confidence=min_confidence,
                 )
