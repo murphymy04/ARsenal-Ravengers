@@ -23,23 +23,27 @@ from pipeline.identity import NullIdentity
 from pipeline.segments import merge_close_segments
 from processing.face_detector import FaceDetector
 from processing.face_tracker import FaceTracker
+from processing.speaking_detector import SpeakingDetector
+from processing.vad_speaker import VadSpeaker
 from storage.speaking_log import SpeakingLog
 
 
-def _create_speaker(fps: float):
+def _create_speaker(fps: float, static_boundary: float | None = None):
     if SPEAKING_BACKEND == "vad_rms":
-        from processing.vad_speaker import VadSpeaker
-
-        return VadSpeaker(fps=fps, static_boundary=0.6)
-    from processing.speaking_detector import SpeakingDetector
-
+        return VadSpeaker(fps=fps, static_boundary=static_boundary)
     return SpeakingDetector(fps=fps)
 
 
 class DiarizationPipeline:
-    def __init__(self, identity: IdentityModule | None = None, track_event_queue=None):
+    def __init__(
+        self,
+        identity: IdentityModule | None = None,
+        track_event_queue=None,
+        static_boundary: float | None = None,
+    ):
         self._identity = identity or NullIdentity()
         self._track_event_queue = track_event_queue
+        self._static_boundary = static_boundary
         self._detector: FaceDetector | None = None
         self._tracker: FaceTracker | None = None
         self._speaker = None
@@ -51,7 +55,7 @@ class DiarizationPipeline:
     def open(self, fps: float):
         self._detector = FaceDetector()
         self._tracker = FaceTracker()
-        self._speaker = _create_speaker(fps)
+        self._speaker = _create_speaker(fps, self._static_boundary)
         self._log = SpeakingLog()
         self._last_faces = []
         self._last_smoothed = []

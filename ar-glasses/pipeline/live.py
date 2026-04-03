@@ -32,11 +32,27 @@ from config import (
     VISION_STRIDE,
 )
 from input.camera import Camera
-from input.microphone import Microphone
+from input.microphone import Microphone, SimulatedMic
 from models import IdentityModule
+from pipeline.conversation_end import is_conversation_end
 from pipeline.diarization import DiarizationPipeline
 from pipeline.driver import combine_segments
+from pipeline.identity import FullIdentity
 from pipeline.transcription import TranscriptionPipeline
+from processing.face_embedder import FaceEmbedder
+from processing.face_matcher import FaceMatcher
+from storage.database import Database
+
+try:
+    from pipeline.knowledge import save_to_memory
+except ImportError:
+    save_to_memory = None
+
+try:
+    from pipeline.retrieval import RetrievalWorker, drain_results
+except ImportError:
+    RetrievalWorker = None
+    drain_results = None
 
 
 def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -83,6 +99,8 @@ class LivePipelineDriver:
         self.transcription = transcription
         self.save_to_memory = SAVE_TO_MEMORY
         self.conversation_buffer: list[dict] = []
+        self.retrieval_results: list[tuple] = []
+        self._retrieval_result_queue = None
 
     def run(
         self,
@@ -91,6 +109,7 @@ class LivePipelineDriver:
         clock_fn=None,
         fps: float = CAMERA_FPS,
         vision_stride: int = 1,
+        static_boundary: float | None = None,
     ) -> list[dict]:
         owns_mic = mic is None
         if owns_mic:
@@ -105,11 +124,12 @@ class LivePipelineDriver:
 
         track_event_queue = None
         retrieval_worker = None
-        self._retrieval_result_queue = None
 
         if RETRIEVAL_ENABLED:
-            from pipeline.retrieval import RetrievalWorker
-
+            if RetrievalWorker is None:
+                raise RuntimeError(
+                    "Retrieval is enabled but pipeline.retrieval is unavailable."
+                )
             track_event_queue = queue.Queue()
             self._retrieval_result_queue = queue.Queue()
             retrieval_worker = RetrievalWorker(
@@ -120,7 +140,9 @@ class LivePipelineDriver:
             retrieval_worker.start()
 
         diarization = DiarizationPipeline(
-            identity=self.identity, track_event_queue=track_event_queue
+            identity=self.identity,
+            track_event_queue=track_event_queue,
+            static_boundary=static_boundary,
         )
         diarization.open(fps)
 
@@ -184,8 +206,10 @@ class LivePipelineDriver:
 
         finally:
             if self.save_to_memory and self.conversation_buffer:
-                from pipeline.knowledge import save_to_memory
-
+                if save_to_memory is None:
+                    raise RuntimeError(
+                        "SAVE_TO_MEMORY enabled but knowledge support unavailable."
+                    )
                 save_to_memory(self.conversation_buffer)
             if retrieval_worker:
                 retrieval_worker.stop()
@@ -216,11 +240,12 @@ class LivePipelineDriver:
 
         if self.save_to_memory and combined:
             self.conversation_buffer.extend(combined)
-            from pipeline.conversation_end import is_conversation_end
 
             if is_conversation_end(combined):
-                from pipeline.knowledge import save_to_memory
-
+                if save_to_memory is None:
+                    raise RuntimeError(
+                        "SAVE_TO_MEMORY enabled but knowledge support unavailable."
+                    )
                 save_to_memory(self.conversation_buffer)
                 self.conversation_buffer = []
 
@@ -241,11 +266,13 @@ class LivePipelineDriver:
             )
 
         if self._retrieval_result_queue:
-            from pipeline.retrieval import drain_results
-
-            for person_name, _person_id, facts in drain_results(
-                self._retrieval_result_queue
-            ):
+            if drain_results is None:
+                raise RuntimeError(
+                    "Retrieval result queue exists but drain_results is unavailable."
+                )
+            for result in drain_results(self._retrieval_result_queue):
+                self.retrieval_results.append(result)
+                person_name, _person_id, facts = result
                 print(f"\n  [retrieval] {person_name}: {len(facts)} facts")
                 for fact in facts:
                     print(f"    - {fact}")
@@ -254,11 +281,6 @@ class LivePipelineDriver:
 
 
 if __name__ == "__main__":
-    from pipeline.identity import FullIdentity
-    from processing.face_embedder import FaceEmbedder
-    from processing.face_matcher import FaceMatcher
-    from storage.database import Database
-
     AR_ROOT = Path(__file__).resolve().parent.parent
     SIMULATION_CACHE_DIR = AR_ROOT / "data" / "simulation_cache"
 
@@ -275,8 +297,6 @@ if __name__ == "__main__":
 
         SIMULATION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_file = SIMULATION_CACHE_DIR / f"{video_path.stem}.json"
-
-        from input.microphone import SimulatedMic
 
         fps = get_video_fps(video_path)
         print(f"Simulating: {video_path.name} ({fps:.1f} fps)")
