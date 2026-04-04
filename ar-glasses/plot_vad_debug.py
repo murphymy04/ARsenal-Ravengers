@@ -80,8 +80,14 @@ def plot_debug(df: pd.DataFrame, audio: np.ndarray | None, out_path: Path) -> No
     axis = axes[panel_index]
     panel_index += 1
     vad_active = df["vad_prob"] >= 0.5
+    rms_min = df["rms"].min()
     rms_max = df["rms"].max()
-    rms_norm = df["rms"] / rms_max if rms_max > 0 else df["rms"]
+    rms_range = rms_max - rms_min if rms_max != rms_min else 1.0
+
+    def _normalize(series: "pd.Series") -> "pd.Series":
+        return (series - rms_min) / rms_range
+
+    rms_norm = _normalize(df["rms"])
     axis.fill_between(
         df["timestamp"],
         0,
@@ -100,49 +106,39 @@ def plot_debug(df: pd.DataFrame, audio: np.ndarray | None, out_path: Path) -> No
         label="RMS (normalized)",
     )
     if "boundary" in df.columns:
-        boundary_norm = df["boundary"] / rms_max if rms_max > 0 else df["boundary"] * 0
         axis.plot(
             df["timestamp"],
-            boundary_norm,
+            _normalize(df["boundary"]),
             color="red",
             linestyle="--",
             linewidth=1,
             label="adaptive boundary (normalized)",
         )
     if "noise_floor" in df.columns:
-        noise_floor_norm = (
-            df["noise_floor"] / rms_max if rms_max > 0 else df["noise_floor"] * 0
-        )
         axis.plot(
             df["timestamp"],
-            noise_floor_norm,
+            _normalize(df["noise_floor"]),
             color="purple",
             linestyle=":",
             linewidth=1,
             label="noise floor (normalized)",
         )
-    if {"noise_floor", "speech_mean_low", "speech_mean_high"} <= set(df.columns):
-        low_norm = (
-            (df["noise_floor"] + df["speech_mean_low"]) / rms_max if rms_max > 0 else 0
-        )
-        high_norm = (
-            (df["noise_floor"] + df["speech_mean_high"]) / rms_max if rms_max > 0 else 0
-        )
+    if {"noise_floor", "other_excess", "wearer_excess"} <= set(df.columns):
         axis.plot(
             df["timestamp"],
-            low_norm,
+            _normalize(df["noise_floor"] + df["other_excess"]),
             color="teal",
             linestyle="-.",
             linewidth=1,
-            label="low speech mean (normalized)",
+            label="other speaker mean (normalized)",
         )
         axis.plot(
             df["timestamp"],
-            high_norm,
+            _normalize(df["noise_floor"] + df["wearer_excess"]),
             color="brown",
             linestyle="-.",
             linewidth=1,
-            label="high speech mean (normalized)",
+            label="wearer mean (normalized)",
         )
     axis.set_ylabel("norm amplitude")
     axis.set_title("VAD + RMS combined")
@@ -187,23 +183,23 @@ def plot_debug(df: pd.DataFrame, audio: np.ndarray | None, out_path: Path) -> No
             linewidth=1.5,
             label="noise floor",
         )
-    if {"noise_floor", "speech_mean_low"} <= set(df.columns):
+    if {"noise_floor", "other_excess"} <= set(df.columns):
         axis.plot(
             df["timestamp"],
-            df["noise_floor"] + df["speech_mean_low"],
+            df["noise_floor"] + df["other_excess"],
             color="teal",
             linestyle="-.",
             linewidth=1.2,
-            label="low speech mean",
+            label="other speaker mean",
         )
-    if {"noise_floor", "speech_mean_high"} <= set(df.columns):
+    if {"noise_floor", "wearer_excess"} <= set(df.columns):
         axis.plot(
             df["timestamp"],
-            df["noise_floor"] + df["speech_mean_high"],
+            df["noise_floor"] + df["wearer_excess"],
             color="brown",
             linestyle="-.",
             linewidth=1.2,
-            label="high speech mean",
+            label="wearer mean (anchored)",
         )
     axis.set_ylabel("amplitude")
     axis.set_title("RMS + wearer/other boundary")
