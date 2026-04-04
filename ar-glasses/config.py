@@ -71,15 +71,12 @@ LIGHT_ASD_SPEAKING_THRESHOLD = 0.25  # softmax probability above which = speakin
 
 # VAD + RMS speaker detection (used when SPEAKING_BACKEND = "vad_rms")
 VAD_THRESHOLD = 0.35  # Silero VAD probability above which = speech
-VAD_RMS_BOUNDARY = 0.035  # initial adaptive boundary seed
-VAD_RMS_EWMA_ALPHA = 0.3  # EWMA smoothing for adaptive RMS means
+VAD_RMS_WEARER_EXCESS = 0.15  # anchored wearer RMS excess above noise floor
+VAD_RMS_OTHER_EXCESS_INIT = 0.02  # initial other speaker RMS excess estimate
+VAD_RMS_OTHER_ALPHA = 0.05  # EWMA rate for tracking other speaker mean
 VAD_RMS_NOISE_FLOOR = 0.0  # initial RMS floor before room noise calibration
 VAD_RMS_NOISE_FLOOR_ALPHA = 0.05  # slow EWMA for background noise during non-speech
-VAD_RMS_SEED_HIGH_MULT = 2.0  # mean_high seed = boundary * this
-VAD_RMS_SEED_LOW_MULT = 0.5  # mean_low seed = boundary * this
-VAD_RMS_SPEECH_BUFFER = 180  # recent speech-energy samples used to fit 2 clusters
-VAD_RMS_GMM_MIN_SAMPLES = 12  # minimum speech samples before fitting a 2-Gaussian model
-VAD_RMS_RESET_SILENCE_SECONDS = 1.0  # clear speech history after this much non-speech
+VAD_RMS_EXCESS_SMOOTHING = 0.12  # EWMA on RMS excess signal before classification
 
 # Temporal smoothing (#9)
 TEMPORAL_SMOOTHING_FRAMES = (
