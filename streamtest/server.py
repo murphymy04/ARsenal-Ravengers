@@ -95,26 +95,33 @@ class DiscoveryService:
         except json.JSONDecodeError:
             print(f"[Discovery] Invalid JSON from {addr}")
 
-# ============== Video Receiver ==============
+# ============== Video Receiver with Fragment Reassembly ==============
 
 class VideoReceiver:
+    HEADER_SIZE = 20  # seq(4) + timestamp(8) + width(2) + height(2) + fragIndex(2) + fragTotal(2)
+    
     def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
         self.sock.bind(('0.0.0.0', VIDEO_PORT))
         self.sock.settimeout(1.0)
         
         self.running = False
         self.thread = None
         
-        # Latest frame (thread-safe access)
         self._latest_frame: Optional[FrameData] = None
         self._frame_lock = threading.Lock()
         
-        # Stats
+        self._fragments = {}
+        self._fragment_info = {}
+        self._fragment_lock = threading.Lock()
+        
         self.frames_received = 0
+        self.fragments_received = 0
         self.last_seq = -1
         self.frames_dropped = 0
+        self.incomplete_dropped = 0
         self.start_time = None
         
     def start(self):
@@ -131,7 +138,6 @@ class VideoReceiver:
         self.sock.close()
         
     def get_latest_frame(self) -> Optional[FrameData]:
-        """Get latest frame, returns None if no frame available"""
         with self._frame_lock:
             return self._latest_frame
             
@@ -140,6 +146,7 @@ class VideoReceiver:
         return {
             'frames_received': self.frames_received,
             'frames_dropped': self.frames_dropped,
+            'incomplete_dropped': self.incomplete_dropped,
             'fps': self.frames_received / elapsed if elapsed > 0 else 0,
             'elapsed': elapsed
         }
@@ -148,45 +155,67 @@ class VideoReceiver:
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(65535)
-                self._handle_frame(data)
+                self._handle_packet(data)
             except socket.timeout:
                 continue
             except Exception as e:
                 if self.running:
                     print(f"[Video] Error: {e}")
                     
-    def _handle_frame(self, data: bytes):
-        # Header: seq(4) + timestamp(8) + width(2) + height(2) = 16 bytes
-        if len(data) < 16:
+    def _handle_packet(self, data: bytes):
+        if len(data) < self.HEADER_SIZE:
             return
             
-        header = data[:16]
-        jpeg_data = data[16:]
+        seq = struct.unpack('<I', data[0:4])[0]
+        timestamp = struct.unpack('<Q', data[4:12])[0]
+        width = struct.unpack('<H', data[12:14])[0]
+        height = struct.unpack('<H', data[14:16])[0]
+        frag_index = struct.unpack('<H', data[16:18])[0]
+        frag_total = struct.unpack('<H', data[18:20])[0]
+        payload = data[self.HEADER_SIZE:]
         
-        seq, timestamp, width, height = struct.unpack('<IQHH', header)
+        self.fragments_received += 1
         
-        # Track dropped frames
-        if self.last_seq >= 0:
-            expected = self.last_seq + 1
-            if seq > expected:
-                dropped = seq - expected
-                self.frames_dropped += dropped
-                # Only log occasionally to avoid spam
-                if dropped > 1:
-                    print(f"[Video] Dropped {dropped} frames (seq {expected} to {seq-1})")
+        if frag_total == 1:
+            self._complete_frame(seq, timestamp, width, height, payload)
+            return
+            
+        with self._fragment_lock:
+            if seq not in self._fragments:
+                self._fragments[seq] = {}
+                self._fragment_info[seq] = (frag_total, timestamp, width, height)
+                
+            self._fragments[seq][frag_index] = payload
+            
+            if len(self._fragments[seq]) == frag_total:
+                try:
+                    full_data = b''.join(self._fragments[seq][i] for i in range(frag_total))
+                    _, ts, w, h = self._fragment_info[seq]
+                    del self._fragments[seq]
+                    del self._fragment_info[seq]
+                    self._complete_frame(seq, ts, w, h, full_data)
+                except KeyError:
+                    del self._fragments[seq]
+                    del self._fragment_info[seq]
+                    
+            old_seqs = [s for s in self._fragments.keys() if s < seq - 10]
+            for old_seq in old_seqs:
+                del self._fragments[old_seq]
+                del self._fragment_info[old_seq]
+                self.incomplete_dropped += 1
+                    
+    def _complete_frame(self, seq: int, timestamp: int, width: int, height: int, jpeg_data: bytes):
+        if self.last_seq >= 0 and seq > self.last_seq + 1:
+            self.frames_dropped += seq - self.last_seq - 1
         self.last_seq = seq
         
-        # Decode JPEG
         try:
             frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_GRAYSCALE)
             if frame is None:
-                print("[Video] Failed to decode JPEG")
                 return
-        except Exception as e:
-            print(f"[Video] Decode error: {e}")
+        except:
             return
             
-        # Store latest frame (overwrite, no queue)
         frame_data = FrameData(
             seq=seq,
             timestamp=timestamp,
@@ -200,7 +229,6 @@ class VideoReceiver:
             self._latest_frame = frame_data
             
         self.frames_received += 1
-
 # ============== Command Sender (TCP Server) ==============
 
 class CommandServer:
@@ -416,6 +444,9 @@ class LaptopServer:
                 connected = "YES" if self.commands.is_connected() else "NO"
                 cv2.putText(display, f"TCP: {connected}", (10, 120),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+                cv2.putText(display, f"Incomplete: {stats['incomplete_dropped']}", (10, 150),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 
                 cv2.imshow('Glasses Feed', display)
             else:
