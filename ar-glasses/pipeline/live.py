@@ -94,13 +94,70 @@ def get_video_fps(video_path: Path) -> float:
 
 
 class LivePipelineDriver:
-    def __init__(self, identity: IdentityModule, transcription: TranscriptionPipeline):
+    def __init__(
+        self,
+        identity: IdentityModule,
+        transcription: TranscriptionPipeline,
+        db=None,
+    ):
         self.identity = identity
         self.transcription = transcription
+        self._db = db
         self.save_to_memory = SAVE_TO_MEMORY
         self.conversation_buffer: list[dict] = []
         self.retrieval_results: list[tuple] = []
         self._retrieval_result_queue = None
+
+    def _dominant_person_id(self, segments: list[dict]) -> int | None:
+        counts: dict[int, int] = {}
+        for seg in segments:
+            pid = seg.get("person_id")
+            if pid is not None:
+                counts[pid] = counts.get(pid, 0) + 1
+
+        if not counts:
+            return None
+
+        total = sum(counts.values())
+        viable = {pid: n for pid, n in counts.items() if n / total >= 0.1}
+        return max(viable, key=viable.get) if viable else None
+
+    def _resolve_and_save(self, segments: list[dict]):
+        person_id = self._dominant_person_id(segments)
+
+        if person_id is None or not self._db:
+            self._store_interaction(None, segments)
+            return
+        person = self._db.get_person(person_id)
+        if not person:
+            self._store_interaction(person_id, segments)
+            return
+
+        self._store_interaction(person_id, segments)
+
+        if not person.is_labeled:
+            print(f"  [knowledge] skipping Zep — {person.name} is not labeled")
+            return
+
+        resolved = []
+        for seg in segments:
+            if seg.get("person_id") == person_id:
+                resolved.append({**seg, "speaker": person.name})
+            else:
+                resolved.append(seg)
+
+        if save_to_memory is None:
+            raise RuntimeError(
+                "SAVE_TO_MEMORY enabled but knowledge support unavailable."
+            )
+        save_to_memory(resolved)
+        print(f"  [knowledge] flushed to Zep with resolved name: {person.name}")
+
+    def _store_interaction(self, person_id: int | None, segments: list[dict]):
+        if not self._db:
+            return
+        transcript = "\n".join(f"{seg['speaker']}: {seg['text']}" for seg in segments)
+        self._db.add_interaction(person_id, transcript)
 
     def run(
         self,
@@ -206,11 +263,7 @@ class LivePipelineDriver:
 
         finally:
             if self.save_to_memory and self.conversation_buffer:
-                if save_to_memory is None:
-                    raise RuntimeError(
-                        "SAVE_TO_MEMORY enabled but knowledge support unavailable."
-                    )
-                save_to_memory(self.conversation_buffer)
+                self._resolve_and_save(self.conversation_buffer)
             if retrieval_worker:
                 retrieval_worker.stop()
             diarization.close()
@@ -242,11 +295,7 @@ class LivePipelineDriver:
             self.conversation_buffer.extend(combined)
 
             if is_conversation_end(combined):
-                if save_to_memory is None:
-                    raise RuntimeError(
-                        "SAVE_TO_MEMORY enabled but knowledge support unavailable."
-                    )
-                save_to_memory(self.conversation_buffer)
+                self._resolve_and_save(self.conversation_buffer)
                 self.conversation_buffer = []
 
         print(f"\n{'=' * 60}")
@@ -287,7 +336,7 @@ if __name__ == "__main__":
     db = Database()
     identity = FullIdentity(FaceEmbedder(), FaceMatcher(), db)
     transcription = TranscriptionPipeline()
-    driver = LivePipelineDriver(identity, transcription)
+    driver = LivePipelineDriver(identity, transcription, db)
 
     if len(sys.argv) > 1:
         video_path = Path(sys.argv[1])
