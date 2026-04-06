@@ -23,22 +23,27 @@ from pipeline.identity import NullIdentity
 from pipeline.segments import merge_close_segments
 from processing.face_detector import FaceDetector
 from processing.face_tracker import FaceTracker
+from processing.speaking_detector import SpeakingDetector
+from processing.vad_speaker import VadSpeaker
 from storage.speaking_log import SpeakingLog
 
 
-def _create_speaker(fps: float):
+def _create_speaker(fps: float, static_boundary: float | None = None):
     if SPEAKING_BACKEND == "vad_rms":
-        from processing.vad_speaker import VadSpeaker
-
-        return VadSpeaker(fps=fps)
-    from processing.speaking_detector import SpeakingDetector
-
+        return VadSpeaker(fps=fps, static_boundary=static_boundary)
     return SpeakingDetector(fps=fps)
 
 
 class DiarizationPipeline:
-    def __init__(self, identity: IdentityModule | None = None):
+    def __init__(
+        self,
+        identity: IdentityModule | None = None,
+        track_event_queue=None,
+        static_boundary: float | None = None,
+    ):
         self._identity = identity or NullIdentity()
+        self._track_event_queue = track_event_queue
+        self._static_boundary = static_boundary
         self._detector: FaceDetector | None = None
         self._tracker: FaceTracker | None = None
         self._speaker = None
@@ -50,7 +55,7 @@ class DiarizationPipeline:
     def open(self, fps: float):
         self._detector = FaceDetector()
         self._tracker = FaceTracker()
-        self._speaker = _create_speaker(fps)
+        self._speaker = _create_speaker(fps, self._static_boundary)
         self._log = SpeakingLog()
         self._last_faces = []
         self._last_smoothed = []
@@ -69,7 +74,15 @@ class DiarizationPipeline:
         if is_vision_frame:
             faces = self._detector.detect(frame, timestamp=timestamp)
             raw_matches = [self._identity.identify(face, frame_idx) for face in faces]
-            smoothed, track_ids = self._tracker.update(faces, raw_matches, frame_idx)
+            smoothed, track_ids, new_track_ids = self._tracker.update(
+                faces, raw_matches, frame_idx
+            )
+
+            if self._track_event_queue and new_track_ids:
+                for match, tid in zip(smoothed, track_ids, strict=False):
+                    if tid in new_track_ids and match.is_known:
+                        self._track_event_queue.put_nowait((tid, match, timestamp))
+
             for face, tid in zip(faces, track_ids, strict=False):
                 self._speaker.add_crop(tid, face.crop)
             self._last_faces = faces

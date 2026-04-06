@@ -3,8 +3,11 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Paths
 PROJECT_ROOT = Path(__file__).parent
+load_dotenv(PROJECT_ROOT / ".env")
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "people.db"
 EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
@@ -68,12 +71,12 @@ LIGHT_ASD_SPEAKING_THRESHOLD = 0.25  # softmax probability above which = speakin
 
 # VAD + RMS speaker detection (used when SPEAKING_BACKEND = "vad_rms")
 VAD_THRESHOLD = 0.35  # Silero VAD probability above which = speech
-VAD_RMS_BOUNDARY = 0.035  # initial adaptive boundary seed
-VAD_RMS_EWMA_ALPHA = 0.3  # EWMA smoothing for adaptive RMS means
+VAD_RMS_WEARER_EXCESS = 0.15  # anchored wearer RMS excess above noise floor
+VAD_RMS_OTHER_EXCESS_INIT = 0.02  # initial other speaker RMS excess estimate
+VAD_RMS_OTHER_ALPHA = 0.05  # EWMA rate for tracking other speaker mean
 VAD_RMS_NOISE_FLOOR = 0.0  # initial RMS floor before room noise calibration
 VAD_RMS_NOISE_FLOOR_ALPHA = 0.05  # slow EWMA for background noise during non-speech
-VAD_RMS_SEED_HIGH_MULT = 2.0  # mean_high seed = boundary * this
-VAD_RMS_SEED_LOW_MULT = 0.5  # mean_low seed = boundary * this
+VAD_RMS_EXCESS_SMOOTHING = 0.12  # EWMA on RMS excess signal before classification
 
 # Temporal smoothing (#9)
 TEMPORAL_SMOOTHING_FRAMES = (
@@ -114,8 +117,20 @@ FONT_THICKNESS = 2
 FLASK_HOST = "0.0.0.0"
 FLASK_PORT = 5000
 
+# Storage backend
+SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_PUBLIC_URL")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_TIMEOUT_SECONDS = float(os.getenv("SUPABASE_TIMEOUT_SECONDS", "30"))
+STORAGE_BACKEND = os.getenv(
+    "STORAGE_BACKEND",
+    "sqlite",
+)
+
 # Knowledge graph (Zep Graphiti → Neo4j)
 SAVE_TO_MEMORY = os.getenv("SAVE_TO_MEMORY", "false").lower() == "true"
+RETRIEVAL_ENABLED = os.getenv("RETRIEVAL_ENABLED", "false").lower() == "true"
+RETRIEVAL_COOLDOWN_SECONDS = float(os.getenv("RETRIEVAL_COOLDOWN_SECONDS", "30"))
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
