@@ -19,7 +19,13 @@ if str(_AR_ROOT) not in sys.path:
 
 from config import CAMERA_FPS, SAMPLE_RATE
 from models import TranscriptSegment
+from pipeline.conversation_end import is_conversation_end
 from pipeline.diarization import DiarizationPipeline
+from pipeline.identity import FullIdentity
+from pipeline.transcription import TranscriptionPipeline
+from processing.face_embedder import FaceEmbedder
+from processing.face_matcher import FaceMatcher
+from storage.database import Database
 
 _DIARIZATION_CACHE_DIR = _AR_ROOT / "data" / "diarization_cache"
 
@@ -156,8 +162,6 @@ def split_into_conversations(
     combined: list[dict],
     chunk_seconds: float = 10.0,
 ) -> list[list[dict]]:
-    from pipeline.conversation_end import is_conversation_end
-
     if not combined:
         return []
 
@@ -188,12 +192,6 @@ def _collect_videos(path: Path) -> list[Path]:
 
 
 if __name__ == "__main__":
-    from pipeline.identity import FullIdentity
-    from pipeline.transcription import TranscriptionPipeline
-    from processing.face_embedder import FaceEmbedder
-    from processing.face_matcher import FaceMatcher
-    from storage.database import Database
-
     target = Path(sys.argv[1]) if len(sys.argv) > 1 else _AR_ROOT / "test_videos"
     videos = _collect_videos(target)
 

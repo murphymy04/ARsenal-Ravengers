@@ -9,6 +9,7 @@ import sys
 import numpy as np
 import torch
 from config import EDGEFACE_CHECKPOINT, EDGEFACE_ROOT, EMBEDDING_MODEL_NAME
+from edgeface.backbones import get_model
 from models import FaceEmbedding
 from torchvision import transforms
 
@@ -29,8 +30,6 @@ class FaceEmbedder:
         edgeface_root = str(EDGEFACE_ROOT)
         if edgeface_root not in sys.path:
             sys.path.insert(0, edgeface_root)
-
-        from backbones import get_model
 
         self._model = get_model(model_name)
         self._model.load_state_dict(
