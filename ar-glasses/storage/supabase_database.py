@@ -368,6 +368,15 @@ class SupabaseDatabase:
             for row in rows
         ]
 
+    def update_interaction_transcript(self, interaction_id: int, transcript: str) -> None:
+        """Update the transcript for an interaction."""
+        self._request(
+            "PATCH",
+            "interactions",
+            json={"transcript": transcript},
+            params={"interaction_id": f"eq.{interaction_id}"},
+        )
+
     def close(self):
         self._session.close()
 

@@ -64,7 +64,7 @@ class SQLiteDatabase:
         except Exception:
             pass
 
-        self._conn.execute("UPDATE people SET is_labeled = 0 WHERE is_labeled IS NULL OR is_labeled != 0")
+        self._conn.execute("UPDATE people SET is_labeled = 0 WHERE is_labeled IS NULL")
         self._conn.commit()
 
     def add_person(
@@ -211,6 +211,14 @@ class SQLiteDatabase:
             {"id": r[0], "timestamp": r[1], "transcript": r[2], "context": r[3]}
             for r in rows
         ]
+
+    def update_interaction_transcript(self, interaction_id: int, transcript: str) -> None:
+        """Update the transcript for an interaction."""
+        self._conn.execute(
+            "UPDATE interactions SET transcript = ? WHERE interaction_id = ?",
+            (transcript, interaction_id),
+        )
+        self._conn.commit()
 
     def _row_to_person(self, row) -> Person:
         """Convert a database row to a Person object with embeddings."""
