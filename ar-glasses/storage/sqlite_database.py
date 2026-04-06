@@ -64,7 +64,7 @@ class SQLiteDatabase:
         except Exception:
             pass
 
-        self._conn.execute("UPDATE people SET is_labeled = 0 WHERE is_labeled IS NULL OR is_labeled != 0")
+        self._conn.execute("UPDATE people SET is_labeled = 0 WHERE is_labeled IS NULL")
         self._conn.commit()
 
     def add_person(
