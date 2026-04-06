@@ -32,7 +32,7 @@ import cv2
 from models import Person
 from storage.database import Database
 
-from api.requests import LabelRequest, MergeRequest
+from api.requests import LabelRequest, MergeRequest, NotesRequest
 from api.responses import LabelResponse, PersonResponse, UnlabeledResponse
 
 # Request/Response Models are in api/responses/ and api/requests/
@@ -190,6 +190,23 @@ class PeopleAPI:
                     action="labeled",
                     details=f"Cluster {person_id} labeled as '{name}'",
                 )
+
+        @self.app.post(
+            "/api/people/{person_id}/notes",
+            response_model=PersonResponse,
+            tags=["people"],
+        )
+        def update_notes(person_id: int, request: NotesRequest):
+            """Update notes for a specific person."""
+            person = self.db.get_person(person_id)
+            if not person:
+                raise HTTPException(
+                    status_code=404, detail=f"Person {person_id} not found"
+                )
+
+            self.db.update_person(person_id, notes=request.notes)
+            updated_person = self.db.get_person(person_id)
+            return self._person_to_response(updated_person)
 
         @self.app.post(
             "/api/people/merge", response_model=LabelResponse, tags=["admin"]
