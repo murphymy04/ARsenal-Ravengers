@@ -7,7 +7,7 @@ can keep using ``from storage.database import Database``.
 from config import STORAGE_BACKEND
 
 if STORAGE_BACKEND == "supabase":
-    from storage.supabase_database import SupabaseDatabase as Database
+    from storage.supabase_database import SupabaseDatabase as Database  # noqa: F401
 else:
-    from storage.sqlite_database import SQLiteDatabase as Database
+    from storage.sqlite_database import SQLiteDatabase as Database  # noqa: F401
 
