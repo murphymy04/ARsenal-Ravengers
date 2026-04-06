@@ -19,6 +19,10 @@ DISCOVERY_BROADCAST = '255.255.255.255'
 DISCOVERY_INTERVAL = 1.0
 DISCOVERY_TIMEOUT = 30.0
 
+FRAGMENT_SIZE = 1400
+HEADER_SIZE = 20
+JPEG_QUALITY = 95
+
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 JPEG_QUALITY = 80
@@ -41,56 +45,38 @@ class Command:
 # ============== Latest Frame Slot (Thread-Safe) ==============
 
 class LatestFrameSlot:
-    """
-    Single-slot buffer that always holds the latest frame.
-    Producer overwrites, consumer reads latest.
-    No backup, no queue - if consumer is slow, frames are skipped.
-    """
-    
     def __init__(self):
         self._frame: Optional[bytes] = None
         self._timestamp: int = 0
         self._seq: int = 0
+        self._width: int = 0
+        self._height: int = 0
         self._lock = threading.Lock()
         self._new_frame_event = threading.Event()
         
-    def put(self, frame_bytes: bytes, timestamp: int, seq: int):
-        """Producer calls this - always overwrites"""
+    def put(self, frame_bytes: bytes, timestamp: int, seq: int, width: int, height: int):
         with self._lock:
             self._frame = frame_bytes
             self._timestamp = timestamp
             self._seq = seq
+            self._width = width
+            self._height = height
         self._new_frame_event.set()
         
-    def get(self, timeout: float = 1.0) -> Optional[tuple[bytes, int, int]]:
-        """
-        Consumer calls this - gets latest frame.
-        Returns (frame_bytes, timestamp, seq) or None if timeout.
-        """
+    def get(self, timeout: float = 1.0) -> Optional[tuple]:
         if self._new_frame_event.wait(timeout=timeout):
             with self._lock:
                 frame = self._frame
                 timestamp = self._timestamp
                 seq = self._seq
-                self._frame = None  # Mark as consumed
+                width = self._width
+                height = self._height
+                self._frame = None
             self._new_frame_event.clear()
             
             if frame is not None:
-                return (frame, timestamp, seq)
+                return (frame, timestamp, seq, width, height)
         return None
-        
-    def get_nonblocking(self) -> Optional[tuple[bytes, int, int]]:
-        """Get latest frame without waiting"""
-        with self._lock:
-            if self._frame is None:
-                return None
-            frame = self._frame
-            timestamp = self._timestamp
-            seq = self._seq
-            self._frame = None
-        self._new_frame_event.clear()
-        return (frame, timestamp, seq)
-
 # ============== Discovery Client ==============
 
 class DiscoveryClient:
@@ -184,53 +170,51 @@ class VideoProducer:
         
     def _produce_loop(self):
         cap = cv2.VideoCapture(self.video_path)
-        
+
         if not cap.isOpened():
             print(f"[Producer] ERROR: Cannot open video file: {self.video_path}")
             return
-            
+
         video_fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        print(f"[Producer] Video: {total_frames} frames at {video_fps} FPS")
-        
-        last_frame_time = time.time()
-        
+        print(f"[Producer] Video: {total_frames} frames at {video_fps:.1f} FPS")
+
         while self.running:
             loop_start = time.time()
-            
-            # Read frame
+
             ret, frame = cap.read()
-            
+
             if not ret:
-                # Loop video
                 print("[Producer] Video ended, looping...")
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
-                
-            # Convert to grayscale and resize (simulating glasses camera)
+
+            # Convert to grayscale, keep original resolution
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.resize(gray, (FRAME_WIDTH, FRAME_HEIGHT))
-            
+            height, width = gray.shape
+
             # Encode to JPEG
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
             ret, jpeg_bytes = cv2.imencode('.jpg', gray, encode_params)
-            
+
             if not ret:
                 print("[Producer] JPEG encode failed")
                 continue
-                
-            # Put in slot (overwrites any previous frame)
-            timestamp = int(time.time() * 1000)  # milliseconds
-            self.frame_slot.put(jpeg_bytes.tobytes(), timestamp, self.seq_counter)
-            
+
+            # Put in slot with resolution info
+            timestamp = int(time.time() * 1000)
+            self.frame_slot.put(jpeg_bytes.tobytes(), timestamp, self.seq_counter, width, height)
+
             self.seq_counter += 1
             self.frames_produced += 1
-            
-            # Rate limiting to target FPS
+
+            # Rate limiting
             elapsed = time.time() - loop_start
             sleep_time = self.frame_interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+        cap.release()
                 
     def get_stats(self) -> dict:
         elapsed = time.time() - self.start_time if self.start_time else 0
@@ -243,11 +227,6 @@ class VideoProducer:
 # ============== Video Consumer (UDP Sender) ==============
 
 class VideoConsumer:
-    """
-    Reads frames from the latest frame slot and sends them to laptop via UDP.
-    If slot is empty, waits. If slot has frame, sends immediately.
-    """
-    
     def __init__(self, frame_slot: LatestFrameSlot, server_info: ServerInfo):
         self.frame_slot = frame_slot
         self.server_ip = server_info.ip
@@ -259,6 +238,7 @@ class VideoConsumer:
         self.thread: Optional[threading.Thread] = None
         
         self.frames_sent = 0
+        self.fragments_sent = 0
         self.bytes_sent = 0
         self.start_time: Optional[float] = None
         
@@ -274,40 +254,56 @@ class VideoConsumer:
         if self.thread:
             self.thread.join(timeout=2)
         self.sock.close()
-        print(f"[Consumer] Stopped - sent {self.frames_sent} frames, {self.bytes_sent / 1024 / 1024:.2f} MB")
+        print(f"[Consumer] Stopped - sent {self.frames_sent} frames, {self.fragments_sent} fragments, {self.bytes_sent / 1024 / 1024:.2f} MB")
         
     def _consume_loop(self):
+        endpoint = (self.server_ip, self.server_port)
+        
         while self.running:
-            # Get latest frame (blocks until available or timeout)
             result = self.frame_slot.get(timeout=1.0)
             
             if result is None:
                 continue
                 
-            frame_bytes, timestamp, seq = result
+            frame_bytes, timestamp, seq, width, height = result
             
-            # Build packet
-            # Header: seq(4) + timestamp(8) + width(2) + height(2) = 16 bytes
-            header = struct.pack('<IQHH', seq, timestamp, FRAME_WIDTH, FRAME_HEIGHT)
-            packet = header + frame_bytes
-            
-            # Send via UDP
             try:
-                self.sock.sendto(packet, (self.server_ip, self.server_port))
+                self._send_frame(endpoint, seq, timestamp, width, height, frame_bytes)
                 self.frames_sent += 1
-                self.bytes_sent += len(packet)
             except Exception as e:
                 print(f"[Consumer] Send error: {e}")
+                
+    def _send_frame(self, endpoint: tuple, seq: int, timestamp: int, width: int, height: int, frame_data: bytes):
+        # Header: seq(4) + timestamp(8) + width(2) + height(2) + fragIndex(2) + fragTotal(2) = 20 bytes
+        max_payload = FRAGMENT_SIZE - HEADER_SIZE
+        total_fragments = (len(frame_data) + max_payload - 1) // max_payload
+        
+        for i in range(total_fragments):
+            offset = i * max_payload
+            length = min(max_payload, len(frame_data) - offset)
+            
+            header = struct.pack('<I', seq)
+            header += struct.pack('<Q', timestamp)
+            header += struct.pack('<H', width)
+            header += struct.pack('<H', height)
+            header += struct.pack('<H', i)
+            header += struct.pack('<H', total_fragments)
+            
+            packet = header + frame_data[offset:offset + length]
+            
+            self.sock.sendto(packet, endpoint)
+            self.fragments_sent += 1
+            self.bytes_sent += len(packet)
                 
     def get_stats(self) -> dict:
         elapsed = time.time() - self.start_time if self.start_time else 0
         return {
             'frames_sent': self.frames_sent,
+            'fragments_sent': self.fragments_sent,
             'bytes_sent': self.bytes_sent,
             'fps': self.frames_sent / elapsed if elapsed > 0 else 0,
             'mbps': (self.bytes_sent * 8 / 1024 / 1024) / elapsed if elapsed > 0 else 0
         }
-
 # ============== Command Receiver (TCP Client) ==============
 
 class CommandReceiver:
@@ -542,25 +538,18 @@ class GlassesClient:
             print(f"         -> Unknown command")
             
     def _print_stats(self):
-        """Print current stats"""
         producer_stats = self.producer.get_stats() if self.producer else {}
         consumer_stats = self.consumer.get_stats() if self.consumer else {}
         tcp_connected = self.commands.is_connected() if self.commands else False
-        
+
         print("-" * 50)
         print(f"[Stats] Producer: {producer_stats.get('frames_produced', 0)} frames, "
               f"{producer_stats.get('fps', 0):.1f} FPS")
         print(f"[Stats] Consumer: {consumer_stats.get('frames_sent', 0)} frames, "
+              f"{consumer_stats.get('fragments_sent', 0)} frags, "
               f"{consumer_stats.get('fps', 0):.1f} FPS, "
               f"{consumer_stats.get('mbps', 0):.2f} Mbps")
         print(f"[Stats] TCP Connected: {tcp_connected}")
-        
-        # Show dropped frames (produced - sent)
-        produced = producer_stats.get('frames_produced', 0)
-        sent = consumer_stats.get('frames_sent', 0)
-        dropped = produced - sent
-        if dropped > 0:
-            print(f"[Stats] Frames skipped: {dropped}")
         print("-" * 50)
         
     def run_main_loop(self):
