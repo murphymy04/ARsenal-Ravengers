@@ -10,6 +10,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional, Callable
 import queue
+import pyaudio
 
 
 # ============== Configuration ==============
@@ -106,6 +107,7 @@ class DiscoveryService:
 
         except json.JSONDecodeError:
             print(f"[Discovery] Invalid JSON from {addr}")
+
 
 # ============== AudioReceiver Class - Add ==============
 
@@ -277,6 +279,66 @@ class AudioReceiver:
                 self._chunks = self._chunks[-self._max_chunks:]
 
         self.chunks_received += 1
+
+
+### audio playback ###########################
+class AudioPlayer:
+    def __init__(self, audio_receiver: AudioReceiver):
+        self.audio_receiver = audio_receiver
+        self.sample_rate = 16000
+
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+
+        self.pyaudio = None
+        self.stream = None
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._play_loop, daemon=True)
+        self.thread.start()
+        print("[AudioPlayer] Started")
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2)
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+        if self.pyaudio:
+            self.pyaudio.terminate()
+        print("[AudioPlayer] Stopped")
+
+    def _play_loop(self):
+        self.pyaudio = pyaudio.PyAudio()
+        self.stream = self.pyaudio.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=self.sample_rate,
+            output=True,
+            frames_per_buffer=1600  # 100ms at 16kHz
+        )
+
+        last_seq = -1
+
+        while self.running:
+            chunk = self.audio_receiver.get_latest_chunk()
+
+            if chunk is None:
+                time.sleep(0.01)
+                continue
+
+            # Skip if already played
+            if chunk.seq <= last_seq:
+                time.sleep(0.01)
+                continue
+
+            last_seq = chunk.seq
+
+            # Play audio
+            self.stream.write(chunk.data.tobytes())
+#end audio playback #########################
 
 # ============== Video Receiver with Fragment Reassembly ==============
 
@@ -580,6 +642,9 @@ class LaptopServer:
         self.video = VideoReceiver()
         self.commands = CommandServer()
         self.audio = AudioReceiver()  # Add this
+
+        self.audio_player = AudioPlayer(self.audio)  # Add audio player
+
                 
         self.glasses_ip: Optional[str] = None
         self.running = False
@@ -594,10 +659,12 @@ class LaptopServer:
         self.video.start()
         self.commands.start()
         self.audio.start()  # Add this
+        self.audio_player.start()  # Add
         print("[Server] All services started")
 
     def stop(self):
         self.running = False
+        self.audio_player.stop()  # Add
         self.discovery.stop()
         self.video.stop()
         self.commands.stop()
