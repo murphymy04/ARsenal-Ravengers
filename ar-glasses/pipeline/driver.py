@@ -129,7 +129,7 @@ def combine_segments(
 ) -> list[dict]:
     result = []
     for seg in transcript_segments:
-        best_name, best_coverage = "wearer", 0.0
+        best_name, best_person_id, best_coverage = "wearer", None, 0.0
         seg_duration = seg.end_time - seg.start_time
 
         for sp in diarization_segments:
@@ -142,13 +142,16 @@ def combine_segments(
             if coverage > best_coverage:
                 best_coverage = coverage
                 best_name = sp["name"]
+                best_person_id = sp["person_id"]
 
         if best_coverage < min_coverage:
             best_name = "wearer"
+            best_person_id = None
 
         result.append(
             {
                 "speaker": best_name,
+                "person_id": best_person_id,
                 "text": seg.text,
                 "start": seg.start_time,
                 "end": seg.end_time,

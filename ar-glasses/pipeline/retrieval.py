@@ -23,7 +23,7 @@ class RetrievalWorker:
         self._event_queue = event_queue
         self._result_queue = result_queue
         self._cooldown_seconds = cooldown_seconds
-        self._last_retrieval: dict[int, float] = {}
+        self._last_retrieval: dict[str, float] = {}
         self._stop = threading.Event()
 
         self._loop = asyncio.new_event_loop()
@@ -53,25 +53,21 @@ class RetrievalWorker:
             except queue.Empty:
                 continue
 
-            if not self._should_retrieve(match.person_id, timestamp):
+            if not match.is_known or match.name.startswith("Person "):
                 continue
 
-            query_name = self._resolve_identity(match.person_id, match.name)
-            facts = self._retrieve(query_name)
+            if not self._should_retrieve(match.name, timestamp):
+                continue
 
-            self._result_queue.put_nowait((query_name, match.person_id, facts))
+            facts = self._retrieve(match.name)
+            self._result_queue.put_nowait((match.name, match.person_id, facts))
 
-    def _should_retrieve(self, person_id: int, timestamp: float) -> bool:
-        last = self._last_retrieval.get(person_id, 0)
+    def _should_retrieve(self, name: str, timestamp: float) -> bool:
+        last = self._last_retrieval.get(name, 0)
         if timestamp - last < self._cooldown_seconds:
             return False
-        self._last_retrieval[person_id] = timestamp
+        self._last_retrieval[name] = timestamp
         return True
-
-    def _resolve_identity(self, person_id: int, name: str) -> str:
-        # Stub: pass through tracker name directly.
-        # Future: SQLite lookup to map person_id → labeled name.
-        return name
 
     def _retrieve(self, query_name: str) -> list[str]:
         self._ensure_client()

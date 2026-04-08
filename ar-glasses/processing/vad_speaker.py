@@ -50,7 +50,7 @@ def create_adaptive_rms_state() -> AdaptiveRmsState:
 
 
 def boundary_excess(state: AdaptiveRmsState) -> float:
-    return (state.wearer_excess + state.other_excess) / 2.0 
+    return (state.wearer_excess + state.other_excess) / 2.0
 
 
 def update_noise_floor(state: AdaptiveRmsState, rms_value: float) -> None:
