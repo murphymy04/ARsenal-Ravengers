@@ -71,7 +71,7 @@ LIGHT_ASD_SPEAKING_THRESHOLD = 0.25  # softmax probability above which = speakin
 
 # VAD + RMS speaker detection (used when SPEAKING_BACKEND = "vad_rms")
 VAD_THRESHOLD = 0.35  # Silero VAD probability above which = speech
-VAD_RMS_WEARER_EXCESS = 0.15  # anchored wearer RMS excess above noise floor
+VAD_RMS_WEARER_EXCESS = 0.1  # anchored wearer RMS excess above noise floor
 VAD_RMS_OTHER_EXCESS_INIT = 0.02  # initial other speaker RMS excess estimate
 VAD_RMS_OTHER_ALPHA = 0.05  # EWMA rate for tracking other speaker mean
 VAD_RMS_NOISE_FLOOR = 0.0  # initial RMS floor before room noise calibration

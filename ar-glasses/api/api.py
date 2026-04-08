@@ -32,8 +32,23 @@ import cv2
 from models import Person
 from storage.database import Database
 
-from api.requests import LabelRequest, MergeRequest, NotesRequest
-from api.responses import LabelResponse, PersonResponse, UnlabeledResponse
+from api.requests import (
+    LabelRequest,
+    MergeRequest,
+    NotesRequest,
+    InteractionRequest,
+)
+from api.responses import (
+    LabelResponse,
+    PersonResponse,
+    UnlabeledResponse,
+    InteractionResponse,
+)
+
+try:
+    from pipeline.knowledge import save_to_memory
+except ImportError:
+    save_to_memory = None
 
 # Request/Response Models are in api/responses/ and api/requests/
 
@@ -80,18 +95,26 @@ class PeopleAPI:
             """Get only unlabeled clusters awaiting names from the mobile app."""
             people = self.db.get_all_people()
             unlabeled = [p for p in people if not p.is_labeled]
-            return [
-                UnlabeledResponse(
-                    person_id=p.person_id,
-                    name=p.name,
-                    embedding_count=len(p.embeddings),
-                    last_seen=p.last_seen.isoformat() if p.last_seen else None,
-                    thumbnail_url=f"/api/people/{p.person_id}/thumbnail"
-                    if p.thumbnail is not None
-                    else None,
+            results = []
+            for p in unlabeled:
+                thumbnail_b64 = None
+                if p.thumbnail is not None:
+                    try:
+                        _, buffer = cv2.imencode(".jpg", p.thumbnail)
+                        thumbnail_b64 = base64.b64encode(buffer.tobytes()).decode("utf-8")
+                    except Exception as e:
+                        print(f"Error encoding thumbnail for person {p.person_id}: {e}")
+                
+                results.append(
+                    UnlabeledResponse(
+                        person_id=p.person_id,
+                        name=p.name,
+                        embedding_count=len(p.embeddings),
+                        last_seen=p.last_seen.isoformat() if p.last_seen else None,
+                        thumbnail=thumbnail_b64,
+                    )
                 )
-                for p in unlabeled
-            ]
+            return results
 
         @self.app.get(
             "/api/people/{person_id}", response_model=PersonResponse, tags=["people"]
@@ -170,6 +193,10 @@ class PeopleAPI:
             if existing and existing.person_id != person_id:
                 # Merge case: move embeddings from person → existing
                 self._merge_people(keep=existing, discard=person)
+                # Update interactions from discarded person to use existing person's name
+                self._update_interaction_speaker_names(person_id, existing.name)
+                # Flush updated interactions to Zep
+                self._flush_person_interactions_to_zep(person_id, existing.name)
                 return LabelResponse(
                     person_id=existing.person_id,
                     name=existing.name,
@@ -183,6 +210,10 @@ class PeopleAPI:
             else:
                 # New name: update person and mark as labeled
                 self.db.update_person(person_id, name=name, is_labeled=True)
+                # Update interactions to use the newly labeled name
+                self._update_interaction_speaker_names(person_id, name)
+                # Flush updated interactions to Zep
+                self._flush_person_interactions_to_zep(person_id, name)
                 return LabelResponse(
                     person_id=person_id,
                     name=name,
@@ -253,6 +284,80 @@ class PeopleAPI:
                 {"person_id": person_id, "name": person.name, "status": "deleted"}
             )
 
+        # =================================================================
+        # Interaction Routes
+        # =================================================================
+
+        @self.app.get(
+            "/api/interactions", response_model=list[InteractionResponse], tags=["interactions"]
+        )
+        def get_all_interactions():
+            """Get all interactions from all people."""
+            rows = self.db._conn.execute(
+                "SELECT interaction_id, person_id, timestamp, transcript, context "
+                "FROM interactions "
+                "ORDER BY timestamp DESC"
+            ).fetchall()
+            return [
+                InteractionResponse(
+                    interaction_id=r[0],
+                    person_id=r[1],
+                    timestamp=r[2],
+                    transcript=r[3],
+                    context=r[4],
+                )
+                for r in rows
+            ]
+
+        @self.app.get(
+            "/api/people/{person_id}/interactions",
+            response_model=list[InteractionResponse],
+            tags=["interactions"],
+        )
+        def get_person_interactions(person_id: int, limit: int = 20):
+            """Get recent interactions for a specific person."""
+            person = self.db.get_person(person_id)
+            if not person:
+                raise HTTPException(
+                    status_code=404, detail=f"Person {person_id} not found"
+                )
+            interactions = self.db.get_interactions(person_id, limit=limit)
+            return [
+                InteractionResponse(
+                    interaction_id=i["id"],
+                    person_id=person_id,
+                    timestamp=i["timestamp"],
+                    transcript=i["transcript"],
+                    context=i["context"],
+                )
+                for i in interactions
+            ]
+
+        @self.app.post(
+            "/api/interactions",
+            response_model=InteractionResponse,
+            tags=["interactions"],
+        )
+        def create_interaction(request: InteractionRequest):
+            """Log a new interaction."""
+            interaction_id = self.db.add_interaction(
+                person_id=request.person_id,
+                transcript=request.transcript,
+                context=request.context,
+            )
+            interaction = self.db._conn.execute(
+                "SELECT interaction_id, person_id, timestamp, transcript, context "
+                "FROM interactions WHERE interaction_id = ?",
+                (interaction_id,),
+            ).fetchone()
+            return InteractionResponse(
+                interaction_id=interaction[0],
+                person_id=interaction[1],
+                timestamp=interaction[2],
+                transcript=interaction[3],
+                context=interaction[4],
+            )
+
     def _person_to_response(self, person: Person) -> PersonResponse:
         """Convert Person dataclass to API response."""
         return PersonResponse(
@@ -274,6 +379,94 @@ class PeopleAPI:
             self.db.add_embedding(keep.person_id, emb)
         self.db.update_last_seen(keep.person_id)
         self.db.delete_person(discard.person_id)
+
+    def _update_interaction_speaker_names(self, person_id: int, new_name: str) -> None:
+        """Update interaction transcripts to use the newly labeled person's name.
+        
+        Replaces non-Wearer speaker names with the new_name in all interactions
+        for the given person_id.
+        
+        Args:
+            person_id: The person whose interactions to update
+            new_name: The new name to use for the person in transcripts
+        """
+        interactions = self.db.get_interactions(person_id, limit=1000)
+        
+        for interaction in interactions:
+            transcript = interaction["transcript"]
+            lines = transcript.split("\n")
+            updated_lines = []
+            
+            for line in lines:
+                # Replace any non-Wearer speaker with the new_name
+                if ": " in line:
+                    speaker, text = line.split(": ", 1)
+                    if speaker != "Wearer":
+                        # Replace old speaker name with new name
+                        line = f"{new_name}: {text}"
+                updated_lines.append(line)
+            
+            updated_transcript = "\n".join(updated_lines)
+            
+            # Only update if transcript changed
+            if updated_transcript != transcript:
+                self.db.update_interaction_transcript(
+                    interaction["id"], updated_transcript
+                )
+
+    def _transcript_to_segments(self, transcript: str, person_name: str) -> list[dict]:
+        """Convert interaction transcript to segments format for Zep.
+        
+        Args:
+            transcript: The interaction transcript (speaker: text format)
+            person_name: The labeled person name
+            
+        Returns:
+            List of segments with speaker and text keys
+        """
+        segments = []
+        if not transcript:
+            return segments
+            
+        lines = transcript.split("\n")
+        for line in lines:
+            if ": " in line:
+                speaker, text = line.split(": ", 1)
+                segments.append({
+                    "speaker": speaker,
+                    "text": text
+                })
+        return segments
+
+    def _flush_person_interactions_to_zep(self, person_id: int, person_name: str) -> None:
+        """Flush all interactions for a labeled person to Zep (knowledge graph).
+        
+        Converts interaction transcripts to segments and sends to Zep using save_to_memory.
+        
+        Args:
+            person_id: The person whose interactions to flush
+            person_name: The labeled person name
+        """
+        if save_to_memory is None:
+            print(f"  [knowledge] skipping Zep flush — knowledge support unavailable")
+            return
+            
+        interactions = self.db.get_interactions(person_id, limit=1000)
+        if not interactions:
+            print(f"  [knowledge] no interactions to flush for {person_name}")
+            return
+        
+        # Convert all interactions to segments
+        all_segments = []
+        for interaction in interactions:
+            segments = self._transcript_to_segments(
+                interaction["transcript"], person_name
+            )
+            all_segments.extend(segments)
+        
+        if all_segments:
+            save_to_memory(all_segments)
+            print(f"  [knowledge] flushed {len(all_segments)} segments to Zep for {person_name}")
 
     def run(
         self,

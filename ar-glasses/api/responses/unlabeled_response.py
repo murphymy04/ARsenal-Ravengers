@@ -8,4 +8,4 @@ class UnlabeledResponse(BaseModel):
     name: str
     embedding_count: int
     last_seen: str | None
-    thumbnail_url: str | None
+    thumbnail: str | None  # base64-encoded JPEG

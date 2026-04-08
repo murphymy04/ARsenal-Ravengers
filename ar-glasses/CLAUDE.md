@@ -87,9 +87,27 @@ For 1-on-1 conversations stride 3-5 is safe since faces move slowly.
 
 ## Retrieval pipeline
 
-When a known face appears, an optional retrieval side-channel queries the Zep/Graphiti knowledge graph for context about that person. The diarization pipeline pushes track creation events to a queue; `pipeline/retrieval.py` consumes them, applies a per-person cooldown (`RETRIEVAL_COOLDOWN_SECONDS`), and queries Graphiti. Results are drained and printed at each flush window. Enabled via `RETRIEVAL_ENABLED=true` env var. The identity resolution step (`_resolve_identity`) is currently a stub that passes through the tracker name (e.g. "Person 8") — it will eventually do a SQLite lookup to map person_id to a labeled name.
+When a known face appears, an optional retrieval side-channel queries the Zep/Graphiti knowledge graph for context about that person. The diarization pipeline pushes track creation events to a queue; `pipeline/retrieval.py` consumes them, applies a per-person cooldown (`RETRIEVAL_COOLDOWN_SECONDS`), and queries Graphiti. Results are drained and printed at each flush window. Enabled via `RETRIEVAL_ENABLED=true` env var.
 
-To test retrieval end-to-end, run `python test_retrieval_e2e.py` with Neo4j running. This seeds the knowledge graph by processing `timur_myles.mp4` and `timur_will.mp4` with `SAVE_TO_MEMORY=True`, then processes `myles_and_will.mp4` with retrieval enabled to verify that facts are returned when known faces are recognized.
+### Identity resolution & gates
+
+- **Labeled-only retrieval**: retrieval skips auto-clusters ("Person N"). Only labeled people with real names trigger a Graphiti query.
+- **Name-based cooldown**: cooldown is keyed by resolved name, not person_id. Multiple face clusters for the same person (e.g. clusters 2 and 3 both labeled "Peter Nguyen") share one cooldown window.
+- **Dominant person_id filtering** (`_dominant_person_id` in `live.py`): when flushing a conversation buffer, picks the most-seen person_id and ignores any cluster with <10% of speaker assignments.
+- **Labeled-only Zep flush** (`_resolve_and_save` in `live.py`): unlabeled people only get stored in the SQLite interactions table. Labeled people get their real name substituted into the transcript before the Zep episode flush.
+
+### Testing retrieval
+
+```bash
+# Seed knowledge graph (requires Neo4j running via docker compose)
+python seed_myles.py
+
+# Labeled person — retrieval fires once, Zep flush with resolved name
+RETRIEVAL_ENABLED=True SAVE_TO_MEMORY=true python pipeline/live.py test_videos/timur_myles_2.mp4
+
+# Unlabeled person — no retrieval, no Zep flush, interaction still stored in SQLite
+RETRIEVAL_ENABLED=True SAVE_TO_MEMORY=true python pipeline/live.py test_videos/timur_peter.mp4
+```
 
 ## Key files
 
@@ -110,11 +128,9 @@ To test retrieval end-to-end, run `python test_retrieval_e2e.py` with Neo4j runn
 
 ```bash
 cd ar-glasses
-# Live camera
-python -m pipeline.live
 
 # Video file (auto-caches results)
-python -m pipeline.live test_videos/clip.mp4
+python pipeline/live.py test_videos/clip.mp4
 
 # Debug overlay
 python debug_video.py [--fast] test_videos/clip.mp4
