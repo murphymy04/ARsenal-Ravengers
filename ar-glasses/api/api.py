@@ -84,7 +84,15 @@ class PeopleAPI:
         def get_all_people():
             """Get all enrolled people with metadata."""
             people = self.db.get_all_people()
-            return [self._person_to_response(p) for p in people]
+            # Filter out duplicates: keep only first person per name (case/whitespace insensitive)
+            seen_names = set()
+            unique_people = []
+            for p in people:
+                norm_name = self._normalize_name(p.name)
+                if norm_name not in seen_names:
+                    seen_names.add(norm_name)
+                    unique_people.append(p)
+            return [self._person_to_response(p) for p in unique_people]
 
         @self.app.get(
             "/api/people/unlabeled",
@@ -115,6 +123,25 @@ class PeopleAPI:
                     )
                 )
             return results
+
+        @self.app.get(
+            "/api/people/labeled",
+            response_model=list[PersonResponse],
+            tags=["people"],
+        )
+        def get_labeled_people():
+            """Get all labeled people with metadata."""
+            people = self.db.get_all_people()
+            labeled = [p for p in people if p.is_labeled]
+            # Filter out duplicates: keep only first person per name (case/whitespace insensitive)
+            seen_names = set()
+            unique_people = []
+            for p in labeled:
+                norm_name = self._normalize_name(p.name)
+                if norm_name not in seen_names:
+                    seen_names.add(norm_name)
+                    unique_people.append(p)
+            return [self._person_to_response(p) for p in unique_people]
 
         @self.app.get(
             "/api/people/{person_id}", response_model=PersonResponse, tags=["people"]
@@ -168,8 +195,8 @@ class PeopleAPI:
         def label_person(person_id: int, request: LabelRequest):
             """Assign a name to an unlabeled cluster.
 
-            If the name matches an existing person, merges the clusters.
-            Otherwise, marks this cluster as labeled with the new name.
+            Marks this cluster as labeled with the new name.
+            Does not merge with existing people.
             """
             person = self.db.get_person(person_id)
             if not person:
@@ -372,6 +399,17 @@ class PeopleAPI:
             if person.thumbnail is not None
             else None,
         )
+
+    def _normalize_name(self, name: str) -> str:
+        """Normalize name for duplicate comparison: lowercase and collapse whitespace.
+        
+        Args:
+            name: The name to normalize
+            
+        Returns:
+            Normalized name (lowercase, single spaces)
+        """
+        return " ".join(name.lower().split())
 
     def _merge_people(self, keep: Person, discard: Person) -> None:
         """Move all embeddings from discard → keep, then delete discard."""
