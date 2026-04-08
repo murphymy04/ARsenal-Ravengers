@@ -13,6 +13,9 @@ from typing import Optional
 from queue import Queue, Empty
 
 # ============== Configuration ==============
+AUDIO_PORT = 5003
+AUDIO_CHUNK_MS = 100
+AUDIO_SAMPLE_RATE = 16000
 
 DISCOVERY_PORT = 5002
 DISCOVERY_BROADCAST = '255.255.255.255'
@@ -34,6 +37,7 @@ class ServerInfo:
     ip: str
     video_port: int
     command_port: int
+    audio_port: int  # Add this
 
 @dataclass
 class Command:
@@ -116,11 +120,11 @@ class DiscoveryClient:
                     server_info = ServerInfo(
                         ip=addr[0],
                         video_port=response.get('video_port', 5000),
-                        command_port=response.get('command_port', 5001)
+                        command_port=response.get('command_port', 5001),
+                        audio_port=response.get('audio_port', 5003)  # Add this
                     )
                     print(f"[Discovery] Found laptop at {server_info.ip}")
                     return server_info
-                    
             except socket.timeout:
                 continue
             except json.JSONDecodeError:
@@ -133,6 +137,250 @@ class DiscoveryClient:
         
     def close(self):
         self.sock.close()
+class AudioChunkSlot:
+    def __init__(self):
+        self._data: Optional[bytes] = None
+        self._timestamp_start: int = 0
+        self._timestamp_end: int = 0
+        self._seq: int = 0
+        self._lock = threading.Lock()
+        self._new_chunk_event = threading.Event()
+
+    def put(self, pcm_data: bytes, ts_start: int, ts_end: int, seq: int):
+        with self._lock:
+            self._data = pcm_data
+            self._timestamp_start = ts_start
+            self._timestamp_end = ts_end
+            self._seq = seq
+        self._new_chunk_event.set()
+
+    def get(self, timeout: float = 1.0) -> Optional[tuple]:
+        if self._new_chunk_event.wait(timeout=timeout):
+            with self._lock:
+                data = self._data
+                ts_start = self._timestamp_start
+                ts_end = self._timestamp_end
+                seq = self._seq
+                self._data = None
+            self._new_chunk_event.clear()
+            if data is not None:
+                return (data, ts_start, ts_end, seq)
+        return None
+class AudioProducer:
+    def __init__(self, audio_path: str, chunk_slot: AudioChunkSlot, shared_clock):
+        self.audio_path = audio_path
+        self.chunk_slot = chunk_slot
+        self.shared_clock = shared_clock
+        self.sample_rate = AUDIO_SAMPLE_RATE
+        self.chunk_ms = AUDIO_CHUNK_MS
+        
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        self.seq_counter = 0
+        self.chunks_produced = 0
+        
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._produce_loop, daemon=True)
+        self.thread.start()
+        print(f"[AudioProducer] Started - reading from {self.audio_path}")
+        
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2)
+        print(f"[AudioProducer] Stopped - produced {self.chunks_produced} chunks")
+        
+    def _produce_loop(self):
+        import wave
+        
+        try:
+            wf = wave.open(self.audio_path, 'rb')
+        except Exception as e:
+            print(f"[AudioProducer] Cannot open audio file: {e}")
+            print("[AudioProducer] Generating silence instead")
+            self._produce_silence_loop()
+            return
+            
+        file_sample_rate = wf.getframerate()
+        channels = wf.getnchannels()
+        sample_width = wf.getsampwidth()
+        
+        print(f"[AudioProducer] Audio: {file_sample_rate}Hz, {channels}ch, {sample_width*8}bit")
+        
+        samples_per_chunk = (self.sample_rate * self.chunk_ms) // 1000
+        chunk_interval = self.chunk_ms / 1000.0
+        
+        while self.running:
+            loop_start = time.time()
+            ts_start = self.shared_clock.elapsed_ms()
+            
+            # Read samples from file
+            frames = wf.readframes(samples_per_chunk)
+            
+            if len(frames) == 0:
+                # Loop audio file
+                wf.rewind()
+                frames = wf.readframes(samples_per_chunk)
+                
+            # Convert to mono 16-bit if needed
+            pcm_data = self._convert_audio(frames, channels, sample_width)
+            
+            ts_end = self.shared_clock.elapsed_ms()
+            
+            self.chunk_slot.put(pcm_data, ts_start, ts_end, self.seq_counter)
+            self.seq_counter += 1
+            self.chunks_produced += 1
+            
+            # Rate limit
+            elapsed = time.time() - loop_start
+            sleep_time = chunk_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+                
+        wf.close()
+        
+    def _produce_silence_loop(self):
+        samples_per_chunk = (self.sample_rate * self.chunk_ms) // 1000
+        silence = bytes(samples_per_chunk * 2)  # 16-bit = 2 bytes per sample
+        chunk_interval = self.chunk_ms / 1000.0
+        
+        while self.running:
+            loop_start = time.time()
+            ts_start = self.shared_clock.elapsed_ms()
+            
+            time.sleep(chunk_interval * 0.9)
+            
+            ts_end = self.shared_clock.elapsed_ms()
+            
+            self.chunk_slot.put(silence, ts_start, ts_end, self.seq_counter)
+            self.seq_counter += 1
+            self.chunks_produced += 1
+            
+            elapsed = time.time() - loop_start
+            sleep_time = chunk_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+                
+    def _convert_audio(self, frames: bytes, channels: int, sample_width: int) -> bytes:
+        # Convert to numpy
+        if sample_width == 2:
+            audio = np.frombuffer(frames, dtype=np.int16)
+        elif sample_width == 1:
+            audio = np.frombuffer(frames, dtype=np.uint8).astype(np.int16) * 256 - 32768
+        else:
+            audio = np.frombuffer(frames, dtype=np.int16)
+            
+        # Convert to mono if stereo
+        if channels == 2:
+            audio = audio.reshape(-1, 2).mean(axis=1).astype(np.int16)
+            
+        return audio.tobytes()
+        
+    def get_stats(self) -> dict:
+        return {
+            'chunks_produced': self.chunks_produced,
+            'seq': self.seq_counter
+        }
+
+class AudioConsumer:
+    HEADER_SIZE = 28
+    
+    def __init__(self, chunk_slot: AudioChunkSlot, server_info: ServerInfo):
+        self.chunk_slot = chunk_slot
+        self.server_ip = server_info.ip
+        self.server_port = server_info.audio_port
+        self.sample_rate = AUDIO_SAMPLE_RATE
+        
+        self.sock: Optional[socket.socket] = None
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        
+        self.chunks_sent = 0
+        self.bytes_sent = 0
+        self.start_time: Optional[float] = None
+        
+    def start(self):
+        self.running = True
+        self.start_time = time.time()
+        self.thread = threading.Thread(target=self._send_loop, daemon=True)
+        self.thread.start()
+        print(f"[AudioConsumer] Started - sending to {self.server_ip}:{self.server_port}")
+        
+    def stop(self):
+        self.running = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except:
+                pass
+        if self.thread:
+            self.thread.join(timeout=2)
+        print(f"[AudioConsumer] Stopped - sent {self.chunks_sent} chunks")
+        
+    def _send_loop(self):
+        while self.running and not self._connect():
+            time.sleep(2)
+            
+        while self.running:
+            result = self.chunk_slot.get(timeout=1.0)
+            
+            if result is None:
+                continue
+                
+            pcm_data, ts_start, ts_end, seq = result
+            
+            try:
+                self._send_chunk(pcm_data, ts_start, ts_end, seq)
+                self.chunks_sent += 1
+            except Exception as e:
+                print(f"[AudioConsumer] Send error: {e}")
+                # Reconnect
+                self.sock.close()
+                while self.running and not self._connect():
+                    time.sleep(2)
+                    
+    def _connect(self) -> bool:
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((self.server_ip, self.server_port))
+            print(f"[AudioConsumer] TCP connected")
+            return True
+        except Exception as e:
+            print(f"[AudioConsumer] Connect failed: {e}")
+            return False
+            
+    def _send_chunk(self, pcm_data: bytes, ts_start: int, ts_end: int, seq: int):
+        num_samples = len(pcm_data) // 2
+        
+        # Header: seq(4) + ts_start(8) + ts_end(8) + sample_rate(4) + num_samples(4) = 28
+        header = struct.pack('<I', seq)
+        header += struct.pack('<Q', ts_start)
+        header += struct.pack('<Q', ts_end)
+        header += struct.pack('<I', self.sample_rate)
+        header += struct.pack('<I', num_samples)
+        
+        packet = header + pcm_data
+        
+        # Length prefix
+        length_prefix = struct.pack('<I', len(packet))
+        
+        self.sock.sendall(length_prefix + packet)
+        self.bytes_sent += len(length_prefix) + len(packet)
+        
+    def get_stats(self) -> dict:
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        return {
+            'chunks_sent': self.chunks_sent,
+            'bytes_sent': self.bytes_sent,
+            'cps': self.chunks_sent / elapsed if elapsed > 0 else 0
+        }
+class SharedClock:
+    def __init__(self):
+        self._start = time.time()
+        
+    def elapsed_ms(self) -> int:
+        return int((time.time() - self._start) * 1000)
 
 # ============== Video Producer ==============
 
@@ -202,7 +450,7 @@ class VideoProducer:
                 continue
 
             # Put in slot with resolution info
-            timestamp = int(time.time() * 1000)
+            timestamp = self.shared_clock.elapsed_ms() if self.shared_clock else int(time.time() * 1000)
             self.frame_slot.put(jpeg_bytes.tobytes(), timestamp, self.seq_counter, width, height)
 
             self.seq_counter += 1
@@ -451,19 +699,32 @@ class CommandReceiver:
 # ============== Main Glasses Client ==============
 
 class GlassesClient:
-    def __init__(self, video_path: str, target_fps: int = 30):
+    def __init__(self, video_path: str, audio_path: str = None, target_fps: int = 30):
         self.video_path = video_path
+        self.audio_path = audio_path
         self.target_fps = target_fps
         
         self.discovery: Optional[DiscoveryClient] = None
         self.server_info: Optional[ServerInfo] = None
         
+        # Shared clock for sync
+        self.shared_clock = SharedClock()
+        
+        # Video
         self.frame_slot = LatestFrameSlot()
         self.producer: Optional[VideoProducer] = None
         self.consumer: Optional[VideoConsumer] = None
+        
+        # Audio
+        self.audio_slot = AudioChunkSlot()
+        self.audio_producer: Optional[AudioProducer] = None
+        self.audio_consumer: Optional[AudioConsumer] = None
+        
+        # Commands
         self.commands: Optional[CommandReceiver] = None
         
         self.running = False
+
         
     def discover_and_connect(self, timeout: float = 30.0) -> bool:
         """Discover laptop and setup connections"""
@@ -482,23 +743,35 @@ class GlassesClient:
             
         self.running = True
         
-        # Start producer (reads video, fills slot)
+        # Video
         self.producer = VideoProducer(
             self.video_path, 
             self.frame_slot, 
             target_fps=self.target_fps
         )
+        self.producer.shared_clock = self.shared_clock  # Share clock
         self.producer.start()
         
-        # Start consumer (reads slot, sends to laptop)
         self.consumer = VideoConsumer(self.frame_slot, self.server_info)
         self.consumer.start()
         
-        # Start command receiver
+        # Audio
+        self.audio_producer = AudioProducer(
+            self.audio_path or "",
+            self.audio_slot,
+            self.shared_clock
+        )
+        self.audio_producer.start()
+        
+        self.audio_consumer = AudioConsumer(self.audio_slot, self.server_info)
+        self.audio_consumer.start()
+        
+        # Commands
         self.commands = CommandReceiver(self.server_info)
         self.commands.start()
         
         print("[Glasses] All services started")
+
         
     def stop(self):
         self.running = False
@@ -507,10 +780,15 @@ class GlassesClient:
             self.producer.stop()
         if self.consumer:
             self.consumer.stop()
+        if self.audio_producer:
+            self.audio_producer.stop()
+        if self.audio_consumer:
+            self.audio_consumer.stop()
         if self.commands:
             self.commands.stop()
             
         print("[Glasses] All services stopped")
+
         
     def _handle_command(self, cmd: Command):
         """
@@ -538,18 +816,16 @@ class GlassesClient:
             print(f"         -> Unknown command")
             
     def _print_stats(self):
-        producer_stats = self.producer.get_stats() if self.producer else {}
-        consumer_stats = self.consumer.get_stats() if self.consumer else {}
-        tcp_connected = self.commands.is_connected() if self.commands else False
-
+        ps = self.producer.get_stats() if self.producer else {}
+        vs = self.consumer.get_stats() if self.consumer else {}
+        aps = self.audio_producer.get_stats() if self.audio_producer else {}
+        acs = self.audio_consumer.get_stats() if self.audio_consumer else {}
+        tcp = self.commands.is_connected() if self.commands else False
+        
         print("-" * 50)
-        print(f"[Stats] Producer: {producer_stats.get('frames_produced', 0)} frames, "
-              f"{producer_stats.get('fps', 0):.1f} FPS")
-        print(f"[Stats] Consumer: {consumer_stats.get('frames_sent', 0)} frames, "
-              f"{consumer_stats.get('fragments_sent', 0)} frags, "
-              f"{consumer_stats.get('fps', 0):.1f} FPS, "
-              f"{consumer_stats.get('mbps', 0):.2f} Mbps")
-        print(f"[Stats] TCP Connected: {tcp_connected}")
+        print(f"[Video] Produced: {ps.get('frames_produced', 0)}, Sent: {vs.get('frames_sent', 0)}")
+        print(f"[Audio] Produced: {aps.get('chunks_produced', 0)}, Sent: {acs.get('chunks_sent', 0)}")
+        print(f"[TCP] Commands: {tcp}")
         print("-" * 50)
         
     def run_main_loop(self):
@@ -583,39 +859,37 @@ class GlassesClient:
 def main():
     parser = argparse.ArgumentParser(description='Glasses Client POC')
     parser.add_argument('video', help='Path to video file')
-    parser.add_argument('--fps', type=int, default=30, help='Target FPS (default: 30)')
-    parser.add_argument('--timeout', type=float, default=30.0, help='Discovery timeout in seconds (default: 30)')
-    
+    parser.add_argument('--audio', help='Path to audio file (WAV)', default=None)
+    parser.add_argument('--fps', type=int, default=30, help='Target FPS')
+    parser.add_argument('--timeout', type=float, default=30.0, help='Discovery timeout')
+
     args = parser.parse_args()
-    
+
     print("=" * 50)
     print("Glasses Client - POC")
     print("=" * 50)
     print(f"Video: {args.video}")
-    print(f"Target FPS: {args.fps}")
+    print(f"Audio: {args.audio or 'None (silence)'}")
     print("=" * 50)
-    
-    client = GlassesClient(video_path=args.video, target_fps=args.fps)
-    
+
+    client = GlassesClient(
+        video_path=args.video,
+        audio_path=args.audio,
+        target_fps=args.fps
+    )
+
     try:
-        # Discover laptop
-        print("\n[1/2] Discovering laptop...")
         if not client.discover_and_connect(timeout=args.timeout):
-            print("ERROR: Could not find laptop. Make sure laptop_server.py is running.")
+            print("ERROR: Could not find laptop")
             sys.exit(1)
-            
-        # Start streaming
-        print("\n[2/2] Starting streaming...")
+
         client.start()
-        
-        # Run main loop
         client.run_main_loop()
-        
+
     except KeyboardInterrupt:
-        print("\n\nShutting down...")
+        print("\nShutting down...")
     finally:
         client.stop()
-        
 
 if __name__ == '__main__':
     main()
