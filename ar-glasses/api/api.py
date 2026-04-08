@@ -45,6 +45,11 @@ from api.responses import (
     InteractionResponse,
 )
 
+try:
+    from pipeline.knowledge import save_to_memory
+except ImportError:
+    save_to_memory = None
+
 # Request/Response Models are in api/responses/ and api/requests/
 
 
@@ -190,6 +195,8 @@ class PeopleAPI:
                 self._merge_people(keep=existing, discard=person)
                 # Update interactions from discarded person to use existing person's name
                 self._update_interaction_speaker_names(person_id, existing.name)
+                # Flush updated interactions to Zep
+                self._flush_person_interactions_to_zep(person_id, existing.name)
                 return LabelResponse(
                     person_id=existing.person_id,
                     name=existing.name,
@@ -205,6 +212,8 @@ class PeopleAPI:
                 self.db.update_person(person_id, name=name, is_labeled=True)
                 # Update interactions to use the newly labeled name
                 self._update_interaction_speaker_names(person_id, name)
+                # Flush updated interactions to Zep
+                self._flush_person_interactions_to_zep(person_id, name)
                 return LabelResponse(
                     person_id=person_id,
                     name=name,
@@ -404,6 +413,60 @@ class PeopleAPI:
                 self.db.update_interaction_transcript(
                     interaction["id"], updated_transcript
                 )
+
+    def _transcript_to_segments(self, transcript: str, person_name: str) -> list[dict]:
+        """Convert interaction transcript to segments format for Zep.
+        
+        Args:
+            transcript: The interaction transcript (speaker: text format)
+            person_name: The labeled person name
+            
+        Returns:
+            List of segments with speaker and text keys
+        """
+        segments = []
+        if not transcript:
+            return segments
+            
+        lines = transcript.split("\n")
+        for line in lines:
+            if ": " in line:
+                speaker, text = line.split(": ", 1)
+                segments.append({
+                    "speaker": speaker,
+                    "text": text
+                })
+        return segments
+
+    def _flush_person_interactions_to_zep(self, person_id: int, person_name: str) -> None:
+        """Flush all interactions for a labeled person to Zep (knowledge graph).
+        
+        Converts interaction transcripts to segments and sends to Zep using save_to_memory.
+        
+        Args:
+            person_id: The person whose interactions to flush
+            person_name: The labeled person name
+        """
+        if save_to_memory is None:
+            print(f"  [knowledge] skipping Zep flush — knowledge support unavailable")
+            return
+            
+        interactions = self.db.get_interactions(person_id, limit=1000)
+        if not interactions:
+            print(f"  [knowledge] no interactions to flush for {person_name}")
+            return
+        
+        # Convert all interactions to segments
+        all_segments = []
+        for interaction in interactions:
+            segments = self._transcript_to_segments(
+                interaction["transcript"], person_name
+            )
+            all_segments.extend(segments)
+        
+        if all_segments:
+            save_to_memory(all_segments)
+            print(f"  [knowledge] flushed {len(all_segments)} segments to Zep for {person_name}")
 
     def run(
         self,
