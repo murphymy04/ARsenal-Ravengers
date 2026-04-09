@@ -24,11 +24,9 @@ DISCOVERY_TIMEOUT = 30.0
 
 FRAGMENT_SIZE = 1400
 HEADER_SIZE = 20
+
 JPEG_QUALITY = 95
 
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
-JPEG_QUALITY = 80
 
 # ============== Data Classes ==============
 
@@ -166,11 +164,13 @@ class AudioChunkSlot:
             if data is not None:
                 return (data, ts_start, ts_end, seq)
         return None
+
 class AudioProducer:
-    def __init__(self, audio_path: str, chunk_slot: AudioChunkSlot, shared_clock):
-        self.audio_path = audio_path
+    def __init__(self, video_path: str, chunk_slot: AudioChunkSlot, shared_clock, video_producer):
+        self.video_path = video_path
         self.chunk_slot = chunk_slot
         self.shared_clock = shared_clock
+        self.video_producer = video_producer  # Reference to video producer
         self.sample_rate = AUDIO_SAMPLE_RATE
         self.chunk_ms = AUDIO_CHUNK_MS
         
@@ -179,11 +179,18 @@ class AudioProducer:
         self.seq_counter = 0
         self.chunks_produced = 0
         
+        # Pre-extract all audio
+        self.audio_data: Optional[np.ndarray] = None
+        self.audio_duration_ms = 0
+        
     def start(self):
+        # Extract full audio first
+        self._extract_full_audio()
+        
         self.running = True
         self.thread = threading.Thread(target=self._produce_loop, daemon=True)
         self.thread.start()
-        print(f"[AudioProducer] Started - reading from {self.audio_path}")
+        print(f"[AudioProducer] Started - synced to video")
         
     def stop(self):
         self.running = False
@@ -191,41 +198,59 @@ class AudioProducer:
             self.thread.join(timeout=2)
         print(f"[AudioProducer] Stopped - produced {self.chunks_produced} chunks")
         
-    def _produce_loop(self):
-        import wave
+    def _extract_full_audio(self):
+        """Extract entire audio track into memory"""
+        import subprocess
+        
+        cmd = [
+            'ffmpeg',
+            '-i', self.video_path,
+            '-f', 's16le',
+            '-acodec', 'pcm_s16le',
+            '-ar', str(self.sample_rate),
+            '-ac', '1',
+            '-v', 'quiet',
+            '-'
+        ]
         
         try:
-            wf = wave.open(self.audio_path, 'rb')
-        except Exception as e:
-            print(f"[AudioProducer] Cannot open audio file: {e}")
-            print("[AudioProducer] Generating silence instead")
-            self._produce_silence_loop()
-            return
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
+            pcm_bytes = result.stdout
             
-        file_sample_rate = wf.getframerate()
-        channels = wf.getnchannels()
-        sample_width = wf.getsampwidth()
-        
-        print(f"[AudioProducer] Audio: {file_sample_rate}Hz, {channels}ch, {sample_width*8}bit")
-        
+            if len(pcm_bytes) > 0:
+                self.audio_data = np.frombuffer(pcm_bytes, dtype=np.int16)
+                self.audio_duration_ms = (len(self.audio_data) * 1000) // self.sample_rate
+                print(f"[AudioProducer] Extracted {self.audio_duration_ms}ms of audio")
+            else:
+                print("[AudioProducer] No audio in video, using silence")
+                self.audio_data = None
+                
+        except Exception as e:
+            print(f"[AudioProducer] ffmpeg error: {e}")
+            self.audio_data = None
+            
+    def _produce_loop(self):
         samples_per_chunk = (self.sample_rate * self.chunk_ms) // 1000
         chunk_interval = self.chunk_ms / 1000.0
         
+        last_video_pos_ms = -1
+        
         while self.running:
             loop_start = time.time()
-            ts_start = self.shared_clock.elapsed_ms()
             
-            # Read samples from file
-            frames = wf.readframes(samples_per_chunk)
+            # Get current video position from video producer
+            video_pos_ms = self.video_producer.get_position_ms()
             
-            if len(frames) == 0:
-                # Loop audio file
-                wf.rewind()
-                frames = wf.readframes(samples_per_chunk)
+            # Skip if video hasn't advanced
+            if video_pos_ms == last_video_pos_ms:
+                time.sleep(0.01)
+                continue
                 
-            # Convert to mono 16-bit if needed
-            pcm_data = self._convert_audio(frames, channels, sample_width)
+            last_video_pos_ms = video_pos_ms
             
+            # Get audio chunk for this video position
+            ts_start = self.shared_clock.elapsed_ms()
+            pcm_data = self._get_audio_at_position(video_pos_ms, samples_per_chunk)
             ts_end = self.shared_clock.elapsed_ms()
             
             self.chunk_slot.put(pcm_data, ts_start, ts_end, self.seq_counter)
@@ -238,44 +263,29 @@ class AudioProducer:
             if sleep_time > 0:
                 time.sleep(sleep_time)
                 
-        wf.close()
+    def _get_audio_at_position(self, pos_ms: int, num_samples: int) -> bytes:
+        """Get audio samples starting at video position"""
+        if self.audio_data is None:
+            return bytes(num_samples * 2)  # Silence
+            
+        # Calculate sample offset
+        sample_offset = (pos_ms * self.sample_rate) // 1000
         
-    def _produce_silence_loop(self):
-        samples_per_chunk = (self.sample_rate * self.chunk_ms) // 1000
-        silence = bytes(samples_per_chunk * 2)  # 16-bit = 2 bytes per sample
-        chunk_interval = self.chunk_ms / 1000.0
+        # Handle wraparound (video looped)
+        sample_offset = sample_offset % len(self.audio_data)
         
-        while self.running:
-            loop_start = time.time()
-            ts_start = self.shared_clock.elapsed_ms()
-            
-            time.sleep(chunk_interval * 0.9)
-            
-            ts_end = self.shared_clock.elapsed_ms()
-            
-            self.chunk_slot.put(silence, ts_start, ts_end, self.seq_counter)
-            self.seq_counter += 1
-            self.chunks_produced += 1
-            
-            elapsed = time.time() - loop_start
-            sleep_time = chunk_interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-                
-    def _convert_audio(self, frames: bytes, channels: int, sample_width: int) -> bytes:
-        # Convert to numpy
-        if sample_width == 2:
-            audio = np.frombuffer(frames, dtype=np.int16)
-        elif sample_width == 1:
-            audio = np.frombuffer(frames, dtype=np.uint8).astype(np.int16) * 256 - 32768
+        # Extract samples
+        end_offset = sample_offset + num_samples
+        
+        if end_offset <= len(self.audio_data):
+            samples = self.audio_data[sample_offset:end_offset]
         else:
-            audio = np.frombuffer(frames, dtype=np.int16)
+            # Wrap around
+            part1 = self.audio_data[sample_offset:]
+            part2 = self.audio_data[:end_offset - len(self.audio_data)]
+            samples = np.concatenate([part1, part2])
             
-        # Convert to mono if stereo
-        if channels == 2:
-            audio = audio.reshape(-1, 2).mean(axis=1).astype(np.int16)
-            
-        return audio.tobytes()
+        return samples.tobytes()
         
     def get_stats(self) -> dict:
         return {
@@ -384,6 +394,7 @@ class SharedClock:
 
 # ============== Video Producer ==============
 
+
 class VideoProducer:
     """
     Reads frames from video file and puts them in the latest frame slot.
@@ -402,6 +413,15 @@ class VideoProducer:
         self.seq_counter = 0
         self.frames_produced = 0
         self.start_time: Optional[float] = None
+
+        self.current_position_ms = 0
+        self._position_lock = threading.Lock()
+
+    def get_position_ms(self) -> int:
+        """Get current video playback position in milliseconds"""
+        with self._position_lock:
+            return self.current_position_ms
+
         
     def start(self):
         self.running = True
@@ -418,52 +438,54 @@ class VideoProducer:
         
     def _produce_loop(self):
         cap = cv2.VideoCapture(self.video_path)
-
+        
         if not cap.isOpened():
             print(f"[Producer] ERROR: Cannot open video file: {self.video_path}")
             return
-
+            
         video_fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         print(f"[Producer] Video: {total_frames} frames at {video_fps:.1f} FPS")
-
+        
         while self.running:
             loop_start = time.time()
-
+            
             ret, frame = cap.read()
-
+            
             if not ret:
                 print("[Producer] Video ended, looping...")
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                with self._position_lock:
+                    self.current_position_ms = 0
                 continue
-
-            # Convert to grayscale, keep original resolution
+            
+            # Update position
+            with self._position_lock:
+                self.current_position_ms = int(cap.get(cv2.CAP_PROP_POS_MSEC))
+            
+            # ... rest of existing frame processing code ...
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             height, width = gray.shape
-
-            # Encode to JPEG
+            
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
             ret, jpeg_bytes = cv2.imencode('.jpg', gray, encode_params)
-
+            
             if not ret:
-                print("[Producer] JPEG encode failed")
                 continue
-
-            # Put in slot with resolution info
+                
             timestamp = self.shared_clock.elapsed_ms() if self.shared_clock else int(time.time() * 1000)
             self.frame_slot.put(jpeg_bytes.tobytes(), timestamp, self.seq_counter, width, height)
-
+            
             self.seq_counter += 1
             self.frames_produced += 1
-
-            # Rate limiting
+            
             elapsed = time.time() - loop_start
             sleep_time = self.frame_interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
-
-        cap.release()
                 
+        cap.release() 
+
     def get_stats(self) -> dict:
         elapsed = time.time() - self.start_time if self.start_time else 0
         return {
@@ -471,7 +493,6 @@ class VideoProducer:
             'fps': self.frames_produced / elapsed if elapsed > 0 else 0,
             'seq': self.seq_counter
         }
-
 # ============== Video Consumer (UDP Sender) ==============
 
 class VideoConsumer:
@@ -495,14 +516,14 @@ class VideoConsumer:
         self.start_time = time.time()
         self.thread = threading.Thread(target=self._consume_loop, daemon=True)
         self.thread.start()
-        print(f"[Consumer] Started - sending to {self.server_ip}:{self.server_port}")
+        print(f"[VideoConsumer] Started - sending to {self.server_ip}:{self.server_port}")
         
     def stop(self):
         self.running = False
         if self.thread:
             self.thread.join(timeout=2)
         self.sock.close()
-        print(f"[Consumer] Stopped - sent {self.frames_sent} frames, {self.fragments_sent} fragments, {self.bytes_sent / 1024 / 1024:.2f} MB")
+        print(f"[VideoConsumer] Stopped - sent {self.frames_sent} frames, {self.fragments_sent} fragments, {self.bytes_sent / 1024 / 1024:.2f} MB")
         
     def _consume_loop(self):
         endpoint = (self.server_ip, self.server_port)
@@ -519,25 +540,31 @@ class VideoConsumer:
                 self._send_frame(endpoint, seq, timestamp, width, height, frame_bytes)
                 self.frames_sent += 1
             except Exception as e:
-                print(f"[Consumer] Send error: {e}")
+                print(f"[VideoConsumer] Send error: {e}")
                 
     def _send_frame(self, endpoint: tuple, seq: int, timestamp: int, width: int, height: int, frame_data: bytes):
         # Header: seq(4) + timestamp(8) + width(2) + height(2) + fragIndex(2) + fragTotal(2) = 20 bytes
         max_payload = FRAGMENT_SIZE - HEADER_SIZE
         total_fragments = (len(frame_data) + max_payload - 1) // max_payload
         
+        if total_fragments == 0:
+            total_fragments = 1
+        
         for i in range(total_fragments):
             offset = i * max_payload
             length = min(max_payload, len(frame_data) - offset)
             
-            header = struct.pack('<I', seq)
-            header += struct.pack('<Q', timestamp)
-            header += struct.pack('<H', width)
-            header += struct.pack('<H', height)
-            header += struct.pack('<H', i)
-            header += struct.pack('<H', total_fragments)
+            # Build header
+            header = struct.pack('<I', seq)                    # seq (4 bytes)
+            header += struct.pack('<Q', timestamp)             # timestamp (8 bytes)
+            header += struct.pack('<H', width)                 # width (2 bytes)
+            header += struct.pack('<H', height)                # height (2 bytes)
+            header += struct.pack('<H', i)                     # frag_index (2 bytes)
+            header += struct.pack('<H', total_fragments)       # frag_total (2 bytes)
             
-            packet = header + frame_data[offset:offset + length]
+            # Build packet
+            payload = frame_data[offset:offset + length]
+            packet = header + payload
             
             self.sock.sendto(packet, endpoint)
             self.fragments_sent += 1
@@ -699,83 +726,82 @@ class CommandReceiver:
 # ============== Main Glasses Client ==============
 
 class GlassesClient:
-    def __init__(self, video_path: str, audio_path: str = None, target_fps: int = 30):
+    def __init__(self, video_path: str, target_fps: int = 30):
         self.video_path = video_path
-        self.audio_path = audio_path
         self.target_fps = target_fps
-        
+
         self.discovery: Optional[DiscoveryClient] = None
         self.server_info: Optional[ServerInfo] = None
-        
+
         # Shared clock for sync
         self.shared_clock = SharedClock()
-        
+
         # Video
         self.frame_slot = LatestFrameSlot()
         self.producer: Optional[VideoProducer] = None
         self.consumer: Optional[VideoConsumer] = None
-        
+
         # Audio
         self.audio_slot = AudioChunkSlot()
         self.audio_producer: Optional[AudioProducer] = None
         self.audio_consumer: Optional[AudioConsumer] = None
-        
+
         # Commands
         self.commands: Optional[CommandReceiver] = None
-        
+
         self.running = False
 
-        
     def discover_and_connect(self, timeout: float = 30.0) -> bool:
-        """Discover laptop and setup connections"""
         self.discovery = DiscoveryClient()
         self.server_info = self.discovery.discover(timeout=timeout)
         self.discovery.close()
-        
+
         if self.server_info is None:
             return False
-            
+
         return True
-        
+
     def start(self):
         if self.server_info is None:
             raise RuntimeError("Must call discover_and_connect() first")
-            
+
         self.running = True
-        
-        # Video
+
+        # Video producer first (audio needs reference to it)
         self.producer = VideoProducer(
-            self.video_path, 
-            self.frame_slot, 
+            self.video_path,
+            self.frame_slot,
             target_fps=self.target_fps
         )
-        self.producer.shared_clock = self.shared_clock  # Share clock
+        self.producer.shared_clock = self.shared_clock
         self.producer.start()
-        
+
+        # Video consumer
         self.consumer = VideoConsumer(self.frame_slot, self.server_info)
         self.consumer.start()
-        
-        # Audio
+
+        # Audio producer - pass video producer for sync
         self.audio_producer = AudioProducer(
-            self.audio_path or "",
+            self.video_path,
             self.audio_slot,
-            self.shared_clock
+            self.shared_clock,
+            self.producer  # Video producer reference for sync
         )
         self.audio_producer.start()
-        
+
+        # Audio consumer
         self.audio_consumer = AudioConsumer(self.audio_slot, self.server_info)
         self.audio_consumer.start()
-        
+
         # Commands
         self.commands = CommandReceiver(self.server_info)
         self.commands.start()
-        
+
         print("[Glasses] All services started")
 
-        
     def stop(self):
         self.running = False
-        
+
         if self.producer:
             self.producer.stop()
         if self.consumer:
@@ -786,60 +812,37 @@ class GlassesClient:
             self.audio_consumer.stop()
         if self.commands:
             self.commands.stop()
-            
+
         print("[Glasses] All services stopped")
 
-        
     def _handle_command(self, cmd: Command):
-        """
-        Process a command from the laptop.
-        In real Unity app, this would update UI elements.
-        """
         print(f"[Glasses] Received command: {cmd.cmd} (id={cmd.cmd_id})")
         print(f"         Data: {cmd.data}")
-        
-        if cmd.cmd == 'highlight':
-            x = cmd.data.get('x', 0)
-            y = cmd.data.get('y', 0)
-            radius = cmd.data.get('radius', 50)
-            print(f"         -> Would highlight at ({x}, {y}) with radius {radius}")
-            
-        elif cmd.cmd == 'show_text':
-            text = cmd.data.get('text', '')
-            duration = cmd.data.get('duration', 3)
-            print(f"         -> Would show text '{text}' for {duration}s")
-            
-        elif cmd.cmd == 'clear':
-            print(f"         -> Would clear overlay")
-            
-        else:
-            print(f"         -> Unknown command")
-            
+
     def _print_stats(self):
         ps = self.producer.get_stats() if self.producer else {}
         vs = self.consumer.get_stats() if self.consumer else {}
         aps = self.audio_producer.get_stats() if self.audio_producer else {}
         acs = self.audio_consumer.get_stats() if self.audio_consumer else {}
         tcp = self.commands.is_connected() if self.commands else False
-        
+
         print("-" * 50)
-        print(f"[Video] Produced: {ps.get('frames_produced', 0)}, Sent: {vs.get('frames_sent', 0)}")
-        print(f"[Audio] Produced: {aps.get('chunks_produced', 0)}, Sent: {acs.get('chunks_sent', 0)}")
-        print(f"[TCP] Commands: {tcp}")
+        print(f"[Video] Produced: {ps.get('frames_produced', 0)}, "
+              f"Sent: {vs.get('frames_sent', 0)}, "
+              f"FPS: {vs.get('fps', 0):.1f}")
+        print(f"[Audio] Produced: {aps.get('chunks_produced', 0)}, "
+              f"Sent: {acs.get('chunks_sent', 0)}")
+        print(f"[TCP] Commands connected: {tcp}")
         print("-" * 50)
-        
+
     def run_main_loop(self):
-        """
-        Main loop - processes commands and displays status.
-        In real Unity app, this would be Update().
-        """
         print("[Glasses] Main loop started")
         print("Press Ctrl+C to stop")
         print("-" * 50)
-        
+
         last_stats_time = time.time()
         stats_interval = 2.0
-        
+
         while self.running:
             # Process received commands
             while True:
@@ -847,21 +850,23 @@ class GlassesClient:
                 if cmd is None:
                     break
                 self._handle_command(cmd)
-                
+
             # Print stats periodically
             if time.time() - last_stats_time > stats_interval:
                 self._print_stats()
                 last_stats_time = time.time()
-                
+
             # Small sleep to prevent busy loop
             time.sleep(0.01)
+
+
+# ============== Entry Point ==============
 
 def main():
     parser = argparse.ArgumentParser(description='Glasses Client POC')
     parser.add_argument('video', help='Path to video file')
-    parser.add_argument('--audio', help='Path to audio file (WAV)', default=None)
-    parser.add_argument('--fps', type=int, default=30, help='Target FPS')
-    parser.add_argument('--timeout', type=float, default=30.0, help='Discovery timeout')
+    parser.add_argument('--fps', type=int, default=30, help='Target FPS (default: 30)')
+    parser.add_argument('--timeout', type=float, default=30.0, help='Discovery timeout in seconds (default: 30)')
 
     args = parser.parse_args()
 
@@ -869,27 +874,221 @@ def main():
     print("Glasses Client - POC")
     print("=" * 50)
     print(f"Video: {args.video}")
-    print(f"Audio: {args.audio or 'None (silence)'}")
+    print(f"Target FPS: {args.fps}")
     print("=" * 50)
 
-    client = GlassesClient(
-        video_path=args.video,
-        audio_path=args.audio,
-        target_fps=args.fps
-    )
+    client = GlassesClient(video_path=args.video, target_fps=args.fps)
 
     try:
+        print("\n[1/2] Discovering laptop...")
         if not client.discover_and_connect(timeout=args.timeout):
-            print("ERROR: Could not find laptop")
+            print("ERROR: Could not find laptop. Make sure laptop_server.py is running.")
             sys.exit(1)
 
+        print("\n[2/2] Starting streaming...")
         client.start()
+
         client.run_main_loop()
 
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\n\nShutting down...")
     finally:
         client.stop()
 
+
 if __name__ == '__main__':
     main()
+#class GlassesClient:
+#    def __init__(self, video_path: str, audio_path: str = None, target_fps: int = 30):
+#        self.video_path = video_path
+#        self.target_fps = target_fps
+#        
+#        self.discovery: Optional[DiscoveryClient] = None
+#        self.server_info: Optional[ServerInfo] = None
+#        
+#        # Shared clock for sync
+#        self.shared_clock = SharedClock()
+#        
+#        # Video
+#        self.frame_slot = LatestFrameSlot()
+#        self.producer: Optional[VideoProducer] = None
+#        self.consumer: Optional[VideoConsumer] = None
+#        
+#        # Audio
+#        self.audio_slot = AudioChunkSlot()
+#        self.audio_producer: Optional[AudioProducer] = None
+#        self.audio_consumer: Optional[AudioConsumer] = None
+#        
+#        # Commands
+#        self.commands: Optional[CommandReceiver] = None
+#        
+#        self.running = False
+#
+#        
+#    def discover_and_connect(self, timeout: float = 30.0) -> bool:
+#        """Discover laptop and setup connections"""
+#        self.discovery = DiscoveryClient()
+#        self.server_info = self.discovery.discover(timeout=timeout)
+#        self.discovery.close()
+#        
+#        if self.server_info is None:
+#            return False
+#            
+#        return True
+#        
+#    def start(self):
+#        if self.server_info is None:
+#            raise RuntimeError("Must call discover_and_connect() first")
+#            
+#        self.running = True
+#        
+#        # Video
+#        self.producer = VideoProducer(
+#            self.video_path, 
+#            self.frame_slot, 
+#            target_fps=self.target_fps
+#        )
+#        self.producer.shared_clock = self.shared_clock  # Share clock
+#        self.producer.start()
+#        
+#        self.consumer = VideoConsumer(self.frame_slot, self.server_info)
+#        self.consumer.start()
+#        
+#        # Audio
+#        self.audio_producer = AudioProducer(
+#            self.video_path,  # Same video file
+#            self.audio_slot,
+#            self.shared_clock
+#        )
+#        self.audio_producer.start()
+#        
+#        self.audio_consumer = AudioConsumer(self.audio_slot, self.server_info)
+#        self.audio_consumer.start()
+#        
+#        # Commands
+#        self.commands = CommandReceiver(self.server_info)
+#        self.commands.start()
+#        
+#        print("[Glasses] All services started")
+#
+#        
+#    def stop(self):
+#        self.running = False
+#        
+#        if self.producer:
+#            self.producer.stop()
+#        if self.consumer:
+#            self.consumer.stop()
+#        if self.audio_producer:
+#            self.audio_producer.stop()
+#        if self.audio_consumer:
+#            self.audio_consumer.stop()
+#        if self.commands:
+#            self.commands.stop()
+#            
+#        print("[Glasses] All services stopped")
+#
+#        
+#    def _handle_command(self, cmd: Command):
+#        """
+#        Process a command from the laptop.
+#        In real Unity app, this would update UI elements.
+#        """
+#        print(f"[Glasses] Received command: {cmd.cmd} (id={cmd.cmd_id})")
+#        print(f"         Data: {cmd.data}")
+#        
+#        if cmd.cmd == 'highlight':
+#            x = cmd.data.get('x', 0)
+#            y = cmd.data.get('y', 0)
+#            radius = cmd.data.get('radius', 50)
+#            print(f"         -> Would highlight at ({x}, {y}) with radius {radius}")
+#            
+#        elif cmd.cmd == 'show_text':
+#            text = cmd.data.get('text', '')
+#            duration = cmd.data.get('duration', 3)
+#            print(f"         -> Would show text '{text}' for {duration}s")
+#            
+#        elif cmd.cmd == 'clear':
+#            print(f"         -> Would clear overlay")
+#            
+#        else:
+#            print(f"         -> Unknown command")
+#            
+#    def _print_stats(self):
+#        ps = self.producer.get_stats() if self.producer else {}
+#        vs = self.consumer.get_stats() if self.consumer else {}
+#        aps = self.audio_producer.get_stats() if self.audio_producer else {}
+#        acs = self.audio_consumer.get_stats() if self.audio_consumer else {}
+#        tcp = self.commands.is_connected() if self.commands else False
+#        
+#        print("-" * 50)
+#        print(f"[Video] Produced: {ps.get('frames_produced', 0)}, Sent: {vs.get('frames_sent', 0)}")
+#        print(f"[Audio] Produced: {aps.get('chunks_produced', 0)}, Sent: {acs.get('chunks_sent', 0)}")
+#        print(f"[TCP] Commands: {tcp}")
+#        print("-" * 50)
+#        
+#    def run_main_loop(self):
+#        """
+#        Main loop - processes commands and displays status.
+#        In real Unity app, this would be Update().
+#        """
+#        print("[Glasses] Main loop started")
+#        print("Press Ctrl+C to stop")
+#        print("-" * 50)
+#        
+#        last_stats_time = time.time()
+#        stats_interval = 2.0
+#        
+#        while self.running:
+#            # Process received commands
+#            while True:
+#                cmd = self.commands.get_command()
+#                if cmd is None:
+#                    break
+#                self._handle_command(cmd)
+#                
+#            # Print stats periodically
+#            if time.time() - last_stats_time > stats_interval:
+#                self._print_stats()
+#                last_stats_time = time.time()
+#                
+#            # Small sleep to prevent busy loop
+#            time.sleep(0.01)
+#
+#def main():
+#    parser = argparse.ArgumentParser(description='Glasses Client POC')
+#    parser.add_argument('video', help='Path to video file')
+#    parser.add_argument('--audio', help='Path to audio file (WAV)', default=None)
+#    parser.add_argument('--fps', type=int, default=30, help='Target FPS')
+#    parser.add_argument('--timeout', type=float, default=30.0, help='Discovery timeout')
+#
+#    args = parser.parse_args()
+#
+#    print("=" * 50)
+#    print("Glasses Client - POC")
+#    print("=" * 50)
+#    print(f"Video: {args.video}")
+#    print(f"Audio: {args.audio or 'None (silence)'}")
+#    print("=" * 50)
+#
+#    client = GlassesClient(
+#        video_path=args.video,
+#        audio_path=args.audio,
+#        target_fps=args.fps
+#    )
+#
+#    try:
+#        if not client.discover_and_connect(timeout=args.timeout):
+#            print("ERROR: Could not find laptop")
+#            sys.exit(1)
+#
+#        client.start()
+#        client.run_main_loop()
+#
+#    except KeyboardInterrupt:
+#        print("\nShutting down...")
+#    finally:
+#        client.stop()
+#
+#if __name__ == '__main__':
+#    main()
