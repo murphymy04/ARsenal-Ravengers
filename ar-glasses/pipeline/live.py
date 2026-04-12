@@ -44,9 +44,10 @@ from processing.face_matcher import FaceMatcher
 from storage.database import Database
 
 try:
-    from pipeline.knowledge import save_to_memory
+    from pipeline.knowledge import flush_memory, save_to_memory
 except ImportError:
     save_to_memory = None
+    flush_memory = None
 
 try:
     from pipeline.retrieval import RetrievalWorker, drain_results
@@ -150,7 +151,11 @@ class LivePipelineDriver:
             raise RuntimeError(
                 "SAVE_TO_MEMORY enabled but knowledge support unavailable."
             )
-        save_to_memory(resolved)
+        wearer_name = next(
+            (s["speaker"] for s in resolved if s.get("person_id") != person_id),
+            "Wearer",
+        )
+        save_to_memory(resolved, wearer_name=wearer_name, other_name=person.name)
         print(f"  [knowledge] flushed to Zep with resolved name: {person.name}")
 
     def _store_interaction(self, person_id: int | None, segments: list[dict]):
@@ -264,6 +269,10 @@ class LivePipelineDriver:
         finally:
             if self.save_to_memory and self.conversation_buffer:
                 self._resolve_and_save(self.conversation_buffer)
+            if self.save_to_memory and flush_memory:
+                print("[knowledge] waiting for pending saves...")
+                flush_memory()
+                print("[knowledge] done.")
             if retrieval_worker:
                 retrieval_worker.stop()
             diarization.close()
