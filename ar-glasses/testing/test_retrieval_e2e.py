@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
@@ -32,7 +32,7 @@ from processing.face_embedder import FaceEmbedder
 from processing.face_matcher import FaceMatcher
 from storage.database import Database
 
-TEST_VIDEOS = Path(__file__).resolve().parent / "test_videos"
+TEST_VIDEOS = Path(__file__).resolve().parent.parent / "test_videos"
 SEED_VIDEOS = [
     TEST_VIDEOS / "timur_myles_2.mp4",
     TEST_VIDEOS / "timur_will.mp4",
