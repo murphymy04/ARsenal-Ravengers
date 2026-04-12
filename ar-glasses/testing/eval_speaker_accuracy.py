@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
@@ -35,8 +35,8 @@ from processing.vad_speaker import (
     update_speech_boundary,
 )
 
-TEST_VIDEOS_DIR = Path(__file__).parent / "test_videos"
-ANNOTATIONS_FILE = Path(__file__).parent / "eval" / "transcripts_to_annotate.txt"
+TEST_VIDEOS_DIR = Path(__file__).parent.parent / "test_videos"
+ANNOTATIONS_FILE = Path(__file__).parent.parent / "eval" / "transcripts_to_annotate.txt"
 
 SEGMENT_RE = re.compile(r"\[\s*([\d.]+)\s*-\s*([\d.]+)\s*\]\s*(wearer|other)\s*:")
 

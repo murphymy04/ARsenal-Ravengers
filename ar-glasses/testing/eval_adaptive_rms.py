@@ -13,7 +13,7 @@ Usage:
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -30,7 +30,7 @@ from config import (
 from input.microphone import SimulatedMic
 from pipeline.live import extract_audio_pcm, get_video_fps
 
-TEST_VIDEOS_DIR = Path(__file__).parent / "test_videos"
+TEST_VIDEOS_DIR = Path(__file__).parent.parent / "test_videos"
 SAMPLE_RATE = 16000
 SWEEP_MIN = 0.005
 SWEEP_MAX = 0.400
