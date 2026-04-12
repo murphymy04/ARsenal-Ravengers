@@ -76,10 +76,10 @@ Audio/VAD still processes every frame for continuity. On skipped frames, the las
 python -m pipeline.live test_videos/clip.mp4
 
 # Debug overlay — normal speed with audio sync
-python debug_video.py test_videos/clip.mp4
+python testing/debug_video.py test_videos/clip.mp4
 
 # Debug overlay — accelerated, no audio sync, uses VISION_STRIDE
-python debug_video.py --fast test_videos/clip.mp4
+python testing/debug_video.py --fast test_videos/clip.mp4
 ```
 
 Tune `VISION_STRIDE` in `config.py`. Higher = faster but less temporal resolution on face detection.
@@ -100,7 +100,7 @@ When a known face appears, an optional retrieval side-channel queries the Zep/Gr
 
 ```bash
 # Seed knowledge graph (requires Neo4j running via docker compose)
-python seed_myles.py
+python testing/seed_myles.py
 
 # Labeled person — retrieval fires once, Zep flush with resolved name
 RETRIEVAL_ENABLED=True SAVE_TO_MEMORY=true python pipeline/live.py test_videos/timur_myles_2.mp4
@@ -116,13 +116,13 @@ RETRIEVAL_ENABLED=True SAVE_TO_MEMORY=true python pipeline/live.py test_videos/t
 | `config.py` | All tunable constants |
 | `pipeline/live.py` | Main streaming pipeline (LivePipelineDriver) |
 | `pipeline/driver.py` | Batch video pipeline (PipelineDriver) |
-| `debug_video.py` | Visual debug overlay with face boxes |
+| `testing/debug_video.py` | Visual debug overlay with face boxes |
 | `processing/vad_speaker.py` | VAD + RMS speaker assignment |
 | `processing/face_detector.py` | Face detection (3 backends) |
 | `processing/face_tracker.py` | Temporal identity smoothing |
 | `pipeline/identity.py` | NullIdentity / FullIdentity modules |
 | `pipeline/retrieval.py` | Retrieval worker (cooldown + Graphiti search) |
-| `test_retrieval_e2e.py` | E2E test: seed knowledge graph then test retrieval |
+| `testing/test_retrieval_e2e.py` | E2E test: seed knowledge graph then test retrieval |
 
 ## Running
 
@@ -133,5 +133,5 @@ cd ar-glasses
 python pipeline/live.py test_videos/clip.mp4
 
 # Debug overlay
-python debug_video.py [--fast] test_videos/clip.mp4
+python testing/debug_video.py [--fast] test_videos/clip.mp4
 ```

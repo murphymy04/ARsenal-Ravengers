@@ -10,7 +10,7 @@ import pandas as pd
 
 from config import SAMPLE_RATE, SIMULATION_AUDIO_GAIN
 
-DEFAULT_CSV_PATH = Path(__file__).parent / "data" / "vad_debug.csv"
+DEFAULT_CSV_PATH = Path(__file__).parent.parent / "data" / "vad_debug.csv"
 
 
 def parse_args() -> argparse.Namespace:
