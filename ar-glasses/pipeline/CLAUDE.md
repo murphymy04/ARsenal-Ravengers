@@ -29,3 +29,48 @@
 - Run `ruff check --fix .` and `ruff format .` after modifying Python files
 - All code must pass `ruff check` with zero violations
 - Follow the ruff config in pyproject.toml
+
+## HUD broadcast (Unity glasses app)
+
+`pipeline/hud_broadcast.py` runs a WebSocket server in a daemon thread. When retrieval fires, `LivePipelineDriver.flush_window` publishes the formatted context to every connected client. The Unity app just connects and reads JSON messages — no polling, no framing to handle.
+
+### Running
+
+```bash
+HUD_BROADCAST_ENABLED=true RETRIEVAL_ENABLED=true SAVE_TO_MEMORY=true \
+  python pipeline/live.py test_videos/timur_myles_2.mp4
+```
+
+Server listens on `ws://0.0.0.0:8765` by default. Override with `HUD_BROADCAST_HOST` / `HUD_BROADCAST_PORT`.
+
+### Connecting from Unity
+
+```
+ws://<laptop-ip>:8765
+```
+
+Use `NativeWebSocket` (or any WS client). Each `OnMessage` delivers one JSON object:
+
+```json
+{
+  "type": "person_context",
+  "name": "Myles Murphy",
+  "person_id": 1,
+  "context": {
+    "last_spoke": "1 year ago",
+    "last_spoke_about": "...",
+    "ask_about": "...",
+    "raw_facts": ["...", "..."]
+  }
+}
+```
+
+One message per retrieval event (bounded by `RETRIEVAL_COOLDOWN_SECONDS` per person). Clients can connect/disconnect at any time; disconnected clients are dropped silently on next broadcast.
+
+### Testing without Unity
+
+```bash
+python -m websockets ws://localhost:8765
+```
+
+Or use a minimal Python client to print received payloads.
