@@ -23,6 +23,9 @@ import cv2
 import numpy as np
 from config import (
     CAMERA_FPS,
+    HUD_BROADCAST_ENABLED,
+    HUD_BROADCAST_HOST,
+    HUD_BROADCAST_PORT,
     LIVE_BUFFER_SECONDS,
     RETRIEVAL_COOLDOWN_SECONDS,
     RETRIEVAL_ENABLED,
@@ -54,6 +57,11 @@ try:
 except ImportError:
     RetrievalWorker = None
     drain_results = None
+
+try:
+    from pipeline.hud_broadcast import HudBroadcastServer
+except ImportError:
+    HudBroadcastServer = None
 
 
 def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -108,6 +116,7 @@ class LivePipelineDriver:
         self.conversation_buffer: list[dict] = []
         self.retrieval_results: list[tuple] = []
         self._retrieval_result_queue = None
+        self._hud_server = None
 
     def _dominant_person_id(self, segments: list[dict]) -> int | None:
         counts: dict[int, int] = {}
@@ -186,6 +195,16 @@ class LivePipelineDriver:
 
         track_event_queue = None
         retrieval_worker = None
+
+        if HUD_BROADCAST_ENABLED:
+            if HudBroadcastServer is None:
+                raise RuntimeError(
+                    "HUD broadcast enabled but pipeline.hud_broadcast is unavailable."
+                )
+            self._hud_server = HudBroadcastServer(
+                HUD_BROADCAST_HOST, HUD_BROADCAST_PORT
+            )
+            self._hud_server.start()
 
         if RETRIEVAL_ENABLED:
             if RetrievalWorker is None:
@@ -275,6 +294,8 @@ class LivePipelineDriver:
                 print("[knowledge] done.")
             if retrieval_worker:
                 retrieval_worker.stop()
+            if self._hud_server:
+                self._hud_server.stop()
             diarization.close()
             if owns_mic:
                 mic.close()
@@ -330,10 +351,24 @@ class LivePipelineDriver:
                 )
             for result in drain_results(self._retrieval_result_queue):
                 self.retrieval_results.append(result)
-                person_name, _person_id, facts = result
-                print(f"\n  [retrieval] {person_name}: {len(facts)} facts")
-                for fact in facts:
-                    print(f"    - {fact}")
+                person_name, person_id, context = result
+                print(f"\n  [retrieval] {person_name}:")
+                print(f"    last_spoke:       {context['last_spoke']}")
+                print(f"    last_spoke_about: {context['last_spoke_about']}")
+                print(f"    ask_about:        {context['ask_about']}")
+                print(f"    raw_facts ({len(context['raw_facts'])}):")
+                for fact in context["raw_facts"]:
+                    print(f"      - {fact}")
+
+                if self._hud_server:
+                    self._hud_server.publish(
+                        {
+                            "type": "person_context",
+                            "name": person_name,
+                            "person_id": person_id,
+                            "context": context,
+                        }
+                    )
 
         return combined, diarization_segments
 

@@ -32,3 +32,6 @@ supabase
 
 # Debug viewer
 flask>=3.0
+
+# HUD broadcast (Unity glasses app)
+websockets>=12

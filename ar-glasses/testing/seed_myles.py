@@ -62,7 +62,7 @@ for the actual form scoring.
 Timur: Did you present at the expo?
 Myles Murphy: Yeah, we got second place at the engineering expo. The judges really liked the \
 real-time feedback aspect. We're thinking about publishing the form scoring algorithm \
-as a short paper — our advisor Professor Kim said it could work for a workshop paper.
+as a short paper — our advisor Professor Taele said it could work for a workshop paper.
 Timur: Nice. By the way, are you still playing volleyball on Tuesdays?
 Myles Murphy: Yeah, every Tuesday at the rec center, 7pm. You should come out sometime. \
 We need more people — usually only get like eight showing up.
