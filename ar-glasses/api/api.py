@@ -84,7 +84,15 @@ class PeopleAPI:
         def get_all_people():
             """Get all enrolled people with metadata."""
             people = self.db.get_all_people()
-            return [self._person_to_response(p) for p in people]
+            # Filter out duplicates: keep only first person per name (case/whitespace insensitive)
+            seen_names = set()
+            unique_people = []
+            for p in people:
+                norm_name = self._normalize_name(p.name)
+                if norm_name not in seen_names:
+                    seen_names.add(norm_name)
+                    unique_people.append(p)
+            return [self._person_to_response(p) for p in unique_people]
 
         @self.app.get(
             "/api/people/unlabeled",
@@ -114,6 +122,50 @@ class PeopleAPI:
                         thumbnail=thumbnail_b64,
                     )
                 )
+            return results
+
+        @self.app.get(
+            "/api/people/labeled",
+            response_model=list[PersonResponse],
+            tags=["people"],
+        )
+        def get_labeled_people():
+            """Get all labeled people with metadata."""
+            people = self.db.get_all_people()
+            labeled = [p for p in people if p.is_labeled]
+
+            # Filter out duplicates: keep only first person per name (case/whitespace insensitive)
+            seen_names = set()
+            unique_people = []
+            for p in labeled:
+                norm_name = self._normalize_name(p.name)
+                if norm_name not in seen_names:
+                    seen_names.add(norm_name)
+                    unique_people.append(p)
+
+            results = []
+            for p in unique_people:
+                thumbnail_b64 = None
+                if p.thumbnail is not None:
+                    try:
+                        _, buffer = cv2.imencode(".jpg", p.thumbnail)
+                        thumbnail_b64 = base64.b64encode(buffer.tobytes()).decode("utf-8")
+                    except Exception as e:
+                        print(f"Error encoding thumbnail for person {p.person_id}: {e}")
+
+                results.append(
+                    PersonResponse(
+                        person_id=p.person_id,
+                        name=p.name,
+                        is_labeled=p.is_labeled,
+                        embedding_count=len(p.embeddings),
+                        notes=p.notes, 
+                        created_at=p.created_at.isoformat() if p.created_at else "",
+                        last_seen=p.last_seen.isoformat() if p.last_seen else None,
+                        thumbnail=thumbnail_b64,
+                    )
+                )
+
             return results
 
         @self.app.get(
@@ -168,8 +220,8 @@ class PeopleAPI:
         def label_person(person_id: int, request: LabelRequest):
             """Assign a name to an unlabeled cluster.
 
-            If the name matches an existing person, merges the clusters.
-            Otherwise, marks this cluster as labeled with the new name.
+            Marks this cluster as labeled with the new name.
+            Does not merge with existing people.
             """
             person = self.db.get_person(person_id)
             if not person:
@@ -187,40 +239,19 @@ class PeopleAPI:
             if not name:
                 raise HTTPException(status_code=400, detail="Name cannot be empty")
 
-            # Check if name already exists
-            existing = self.db.get_person_by_name(name)
-
-            if existing and existing.person_id != person_id:
-                # Merge case: move embeddings from person → existing
-                self._merge_people(keep=existing, discard=person)
-                # Update interactions from discarded person to use existing person's name
-                self._update_interaction_speaker_names(person_id, existing.name)
-                # Flush updated interactions to Zep
-                self._flush_person_interactions_to_zep(person_id, existing.name)
-                return LabelResponse(
-                    person_id=existing.person_id,
-                    name=existing.name,
-                    is_labeled=True,
-                    action="merged",
-                    details=(
-                        f"Cluster {person_id} merged into existing person "
-                        f"{existing.person_id}"
-                    ),
-                )
-            else:
-                # New name: update person and mark as labeled
-                self.db.update_person(person_id, name=name, is_labeled=True)
-                # Update interactions to use the newly labeled name
-                self._update_interaction_speaker_names(person_id, name)
-                # Flush updated interactions to Zep
-                self._flush_person_interactions_to_zep(person_id, name)
-                return LabelResponse(
-                    person_id=person_id,
-                    name=name,
-                    is_labeled=True,
-                    action="labeled",
-                    details=f"Cluster {person_id} labeled as '{name}'",
-                )
+            # Update person with the new name and mark as labeled
+            self.db.update_person(person_id, name=name, is_labeled=True)
+            # Update interactions to use the newly labeled name
+            self._update_interaction_speaker_names(person_id, name)
+            # Flush updated interactions to Zep
+            self._flush_person_interactions_to_zep(person_id, name)
+            return LabelResponse(
+                person_id=person_id,
+                name=name,
+                is_labeled=True,
+                action="labeled",
+                details=f"Cluster {person_id} labeled as '{name}'",
+            )
 
         @self.app.post(
             "/api/people/{person_id}/notes",
@@ -292,19 +323,61 @@ class PeopleAPI:
             "/api/interactions", response_model=list[InteractionResponse], tags=["interactions"]
         )
         def get_all_interactions():
-            """Get all interactions from all people."""
+            """Get all interactions from all people.
+            
+            Maps interaction person_ids to primary person_id for each name
+            so the frontend can associate interactions with the correct person entity.
+            """
+            # Build mapping of person_id -> primary person_id for each name
+            person_id_mapping = self._get_primary_person_id_mapping()
+            
             rows = self.db._conn.execute(
-                "SELECT interaction_id, person_id, timestamp, transcript, context "
-                "FROM interactions "
-                "ORDER BY timestamp DESC"
+                "SELECT i.interaction_id, i.person_id, i.timestamp, i.transcript, i.context, p.name "
+                "FROM interactions i "
+                "LEFT JOIN people p ON i.person_id = p.person_id "
+                "ORDER BY i.timestamp DESC"
             ).fetchall()
             return [
                 InteractionResponse(
                     interaction_id=r[0],
-                    person_id=r[1],
+                    person_id=person_id_mapping.get(r[1], r[1]),  # Map to primary person_id
                     timestamp=r[2],
                     transcript=r[3],
                     context=r[4],
+                    person_name=r[5],
+                )
+                for r in rows
+            ]
+
+        @self.app.get(
+            "/api/interactions/labeled",
+            response_model=list[InteractionResponse],
+            tags=["interactions"],
+        )
+        def get_labeled_interactions():
+            """Get all interactions from labeled people only.
+            
+            Maps interaction person_ids to primary person_id for each name
+            so the frontend can associate interactions with the correct person entity.
+            """
+            # Build mapping of person_id -> primary person_id for each name
+            person_id_mapping = self._get_primary_person_id_mapping()
+            
+            rows = self.db._conn.execute(
+                "SELECT i.interaction_id, i.person_id, i.timestamp, i.transcript, i.context, p.name "
+                "FROM interactions i "
+                "LEFT JOIN people p ON i.person_id = p.person_id "
+                "WHERE p.is_labeled = 1 "
+                "ORDER BY i.timestamp DESC"
+            ).fetchall()
+            return [
+                InteractionResponse(
+                    interaction_id=r[0],
+                    person_id=person_id_mapping.get(r[1], r[1]),  # Map to primary person_id
+                    timestamp=r[2],
+                    transcript=r[3],
+                    context=r[4],
+                    person_name=r[5],
                 )
                 for r in rows
             ]
@@ -372,6 +445,36 @@ class PeopleAPI:
             if person.thumbnail is not None
             else None,
         )
+
+    def _normalize_name(self, name: str) -> str:
+        """Normalize name for duplicate comparison: lowercase and collapse whitespace.
+        
+        Args:
+            name: The name to normalize
+            
+        Returns:
+            Normalized name (lowercase, single spaces)
+        """
+        return " ".join(name.lower().split())
+
+    def _get_primary_person_id_mapping(self) -> dict:
+        people = self.db.get_all_people()
+        mapping = {}
+        name_to_primary_id = {}
+        
+        # Sort by person_id to ensure lower IDs are primary
+        for person in sorted(people, key=lambda p: p.person_id):
+            if person.is_labeled:
+                # First labeled person becomes primary
+                if person.name not in name_to_primary_id:
+                    name_to_primary_id[person.name] = person.person_id
+            
+            # Only map if a labeled primary exists
+            if person.name in name_to_primary_id:
+                mapping[person.person_id] = name_to_primary_id[person.name]
+            else:
+                mapping[person.person_id] = person.person_id
+        return mapping
 
     def _merge_people(self, keep: Person, discard: Person) -> None:
         """Move all embeddings from discard → keep, then delete discard."""

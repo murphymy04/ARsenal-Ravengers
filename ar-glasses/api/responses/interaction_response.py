@@ -6,6 +6,7 @@ class InteractionResponse(BaseModel):
 
     interaction_id: int
     person_id: int | None
+    person_name: str | None = None
     timestamp: str
     transcript: str
     context: str
