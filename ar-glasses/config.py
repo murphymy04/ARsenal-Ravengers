@@ -135,5 +135,10 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
 
+# HUD broadcast (Unity glasses app connects over WebSocket)
+HUD_BROADCAST_ENABLED = os.getenv("HUD_BROADCAST_ENABLED", "false").lower() == "true"
+HUD_BROADCAST_HOST = os.getenv("HUD_BROADCAST_HOST", "0.0.0.0")
+HUD_BROADCAST_PORT = int(os.getenv("HUD_BROADCAST_PORT", "8765"))
+
 # Ensure data directory exists
 DATA_DIR.mkdir(exist_ok=True)
