@@ -1,153 +1,325 @@
-"""Debug overlay: plays video with face boxes and ASD speaking probabilities."""
+"""Flask debug viewer for the diarization + retrieval pipeline.
 
+Plays a video through the real LivePipelineDriver and streams:
+  * annotated MJPEG frames with face boxes, identity labels, speaking rings
+  * a caption feed populated each window flush (speaker + transcript)
+  * a retrieval panel populated from driver.retrieval_results
+
+Default mode serves audio via a browser <audio> tag and throttles the
+processing loop to video FPS for best-effort A/V sync. --fast skips
+audio, skips the throttle, and uses VISION_STRIDE.
+"""
+
+import argparse
+import queue
 import sys
+import threading
+import time
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cv2
-import sounddevice as sd
-import time
+from flask import Flask, Response, jsonify, render_template
 
-from config import SAMPLE_RATE, SIMULATION_AUDIO_GAIN, SPEAKING_BACKEND, VISION_STRIDE
+from config import (
+    LIVE_BUFFER_SECONDS,
+    RETRIEVAL_COOLDOWN_SECONDS,
+    RETRIEVAL_ENABLED,
+    SIMULATION_AUDIO_GAIN,
+    VISION_STRIDE,
+)
+from input.camera import Camera
 from input.microphone import SimulatedMic
-from pipeline.live import extract_audio_pcm, get_video_fps
-from pipeline.identity import NullIdentity
-from processing.face_detector import FaceDetector
-from processing.face_tracker import FaceTracker
+from pipeline.diarization import DiarizationPipeline
+from pipeline.identity import FullIdentity, NullIdentity
+from pipeline.live import (
+    LivePipelineDriver,
+    extract_audio_pcm,
+    get_video_fps,
+    pcm_to_wav,
+)
+from pipeline.transcription import TranscriptionPipeline
+from processing.face_embedder import FaceEmbedder
+from processing.face_matcher import FaceMatcher
+from storage.database import Database
+
+try:
+    from pipeline.retrieval import RetrievalWorker
+except ImportError:
+    RetrievalWorker = None
 
 
-def _create_speaker(fps: float):
-    if SPEAKING_BACKEND == "vad_rms":
-        from processing.vad_speaker import VadSpeaker
+@dataclass
+class DebugState:
+    latest_jpeg: bytes | None = None
+    audio_wav: bytes | None = None
+    captions: list[dict] = field(default_factory=list)
+    retrieval: list[dict] = field(default_factory=list)
+    video_fps: float = 30.0
+    video_time: float = 0.0
+    effective_rate: float = 0.0
+    finished: bool = False
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
-        return VadSpeaker(fps=fps)
-    from processing.speaking_detector import SpeakingDetector
 
-    return SpeakingDetector(fps=fps)
+def draw_overlay(frame, faces, matches, track_ids, speaker, timestamp, frame_idx):
+    out = frame.copy()
+
+    for face, match, tid in zip(faces, matches, track_ids, strict=False):
+        b = face.bbox
+        is_speaking = speaker.get_speaking(tid)
+        color = (0, 220, 60) if match.is_known else (30, 80, 220)
+
+        overlay = out.copy()
+        cv2.rectangle(overlay, (b.x1, b.y1), (b.x2, b.y2), color, -1)
+        cv2.addWeighted(overlay, 0.15, out, 0.85, 0, out)
+
+        cv2.rectangle(out, (b.x1, b.y1), (b.x2, b.y2), color, 4 if is_speaking else 2)
+
+        if is_speaking:
+            cx = (b.x1 + b.x2) // 2
+            cv2.circle(out, (cx, b.y1 - 18), 14, (0, 255, 255), 2)
+            cv2.putText(
+                out,
+                "SPK",
+                (cx - 14, b.y1 - 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (0, 255, 255),
+                1,
+            )
+
+        label = f"{match.name} · t{tid}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+        cv2.rectangle(out, (b.x1, b.y1 - th - 12), (b.x1 + tw + 8, b.y1), color, -1)
+        cv2.putText(
+            out,
+            label,
+            (b.x1 + 4, b.y1 - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2,
+        )
+
+    header = f"{timestamp:.2f}s  frame {frame_idx}"
+    cv2.putText(
+        out, header, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2
+    )
+    return out
 
 
-def main(video_path: Path, fast: bool = False):
+def encode_jpeg(frame) -> bytes:
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return buf.tobytes() if ok else b""
+
+
+def build_identity(use_identity: bool):
+    if not use_identity:
+        return None, NullIdentity()
+    db = Database()
+    return db, FullIdentity(FaceEmbedder(), FaceMatcher(), db)
+
+
+def drain_new_retrieval(
+    driver: LivePipelineDriver, last_count: int
+) -> tuple[list[dict], int]:
+    new_items = driver.retrieval_results[last_count:]
+    rendered = [
+        {"name": name, "person_id": person_id, "facts": list(facts)}
+        for name, person_id, facts in new_items
+    ]
+    return rendered, len(driver.retrieval_results)
+
+
+def process_video(video_path: Path, use_identity: bool, fast: bool, state: DebugState):
     fps = get_video_fps(video_path)
     audio = extract_audio_pcm(video_path)
+
+    with state.lock:
+        state.audio_wav = pcm_to_wav(audio)
+        state.video_fps = fps
+
     mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
+    camera = Camera(source=str(video_path))
 
-    identity = NullIdentity()
-    detector = FaceDetector()
-    tracker = FaceTracker()
-    speaker = _create_speaker(fps)
+    db, identity = build_identity(use_identity)
+    transcription = TranscriptionPipeline()
+    driver = LivePipelineDriver(identity, transcription, db)
 
-    stride = VISION_STRIDE if fast else 1
+    track_event_queue = None
+    retrieval_worker = None
+    if RETRIEVAL_ENABLED and RetrievalWorker is not None:
+        track_event_queue = queue.Queue()
+        driver._retrieval_result_queue = queue.Queue()
+        retrieval_worker = RetrievalWorker(
+            track_event_queue,
+            driver._retrieval_result_queue,
+            RETRIEVAL_COOLDOWN_SECONDS,
+        )
+        retrieval_worker.start()
 
-    if not fast:
-        sd.play(mic.audio, samplerate=SAMPLE_RATE)
-    else:
-        print(f"[fast] stride={stride}, audio playback disabled")
+    diarization = DiarizationPipeline(
+        identity=identity, track_event_queue=track_event_queue
+    )
+    diarization.open(fps)
 
-    cap = cv2.VideoCapture(str(video_path))
+    vision_stride = VISION_STRIDE if fast else 1
+
     frame_idx = 0
-    paused = False
-    playback_start = time.time()
-    frame_delay = 1.0 / fps
-
-    last_faces = []
-    last_track_ids = []
+    window_start = 0.0
+    retrieval_seen = 0
+    rate_samples: deque[tuple[float, float]] = deque(maxlen=60)
 
     try:
-        while cap.isOpened():
-            if not paused:
-                ok, frame = cap.read()
-                if not ok:
-                    break
+        for frame in camera.frames():
+            timestamp = frame_idx / fps
+            chunk = mic.advance_frame()
+            is_vision_frame = frame_idx % vision_stride == 0
 
-                timestamp = frame_idx / fps
-                chunk = mic.advance_frame()
-                speaker.drip_audio(chunk)
+            diarization.process_frame(
+                frame, chunk, frame_idx, timestamp, is_vision_frame
+            )
 
-                if frame_idx % stride == 0:
-                    faces = detector.detect(frame, timestamp=timestamp)
-                    raw_matches = [identity.identify(face, frame_idx) for face in faces]
-                    _, track_ids, _ = tracker.update(faces, raw_matches, frame_idx)
+            annotated = draw_overlay(
+                frame,
+                diarization._last_faces,
+                diarization._last_smoothed,
+                diarization._last_track_ids,
+                diarization._speaker,
+                timestamp,
+                frame_idx,
+            )
+            jpeg = encode_jpeg(annotated)
 
-                    for face, tid in zip(faces, track_ids):
-                        speaker.add_crop(tid, face.crop)
+            rate_samples.append((time.perf_counter(), timestamp))
+            effective_rate = 0.0
+            if len(rate_samples) >= 2:
+                wall_span = rate_samples[-1][0] - rate_samples[0][0]
+                video_span = rate_samples[-1][1] - rate_samples[0][1]
+                if wall_span > 0:
+                    effective_rate = video_span / wall_span
 
-                    last_faces = faces
-                    last_track_ids = track_ids
-                else:
-                    faces = last_faces
-                    track_ids = last_track_ids
+            with state.lock:
+                state.latest_jpeg = jpeg
+                state.video_time = timestamp
+                state.effective_rate = effective_rate
 
-                speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
-
-                display = frame.copy()
-                for face, tid in zip(faces, track_ids):
-                    prob = speaker._speaking.get(tid, None)
-                    is_speaking = speaker.get_speaking(tid)
-                    b = face.bbox
-
-                    color = (0, 255, 0) if is_speaking else (0, 0, 255)
-                    cv2.rectangle(display, (b.x1, b.y1), (b.x2, b.y2), color, 2)
-
-                    label = f"t{tid}"
-                    if prob is not None:
-                        label += f" {'SPK' if is_speaking else '   '}"
-
-                    cv2.putText(
-                        display,
-                        label,
-                        (b.x1, b.y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        color,
-                        2,
-                    )
-
-                ts_label = f"{timestamp:.2f}s  frame {frame_idx}"
-                cv2.putText(
-                    display,
-                    ts_label,
-                    (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (255, 255, 255),
-                    2,
+            if timestamp - window_start >= LIVE_BUFFER_SECONDS:
+                combined, _ = driver.flush_window(
+                    diarization, mic, window_start, timestamp
                 )
+                new_retrieval, retrieval_seen = drain_new_retrieval(
+                    driver, retrieval_seen
+                )
+                with state.lock:
+                    state.captions.extend(combined)
+                    state.retrieval.extend(new_retrieval)
+                window_start = timestamp
 
-                frame_idx += 1
+            frame_idx += 1
 
-                if not fast:
-                    target_time = playback_start + frame_idx * frame_delay
-                    sleep_time = target_time - time.time()
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-
-            h, w = display.shape[:2]
-            scale = min(1280 / w, 720 / h, 1.0)
-            if scale < 1.0:
-                display_resized = cv2.resize(display, (int(w * scale), int(h * scale)))
-            else:
-                display_resized = display
-
-            cv2.imshow("debug", display_resized)
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                break
-            elif key == ord(" "):
-                paused = not paused
+        final_end = frame_idx / fps
+        if final_end > window_start:
+            combined, _ = driver.flush_window(diarization, mic, window_start, final_end)
+            new_retrieval, retrieval_seen = drain_new_retrieval(driver, retrieval_seen)
+            with state.lock:
+                state.captions.extend(combined)
+                state.retrieval.extend(new_retrieval)
     finally:
-        sd.stop()
-        speaker.close()
-        detector.close()
-        cap.release()
-        cv2.destroyAllWindows()
+        if retrieval_worker:
+            retrieval_worker.stop()
+        diarization.close()
+        camera.close()
+        with state.lock:
+            state.finished = True
+        print("[debug_video] processing finished")
+
+
+def build_app(state: DebugState, fast: bool) -> Flask:
+    template_dir = Path(__file__).parent / "templates"
+    app = Flask(__name__, template_folder=str(template_dir))
+
+    @app.route("/")
+    def index():
+        return render_template("debug_video.html", fast=fast)
+
+    @app.route("/video")
+    def video():
+        def stream():
+            boundary = b"--frame"
+            last_jpeg_id = 0
+            while True:
+                with state.lock:
+                    jpeg = state.latest_jpeg
+                    finished = state.finished
+                if jpeg is not None:
+                    jpeg_id = id(jpeg)
+                    if jpeg_id != last_jpeg_id:
+                        last_jpeg_id = jpeg_id
+                        yield (
+                            boundary
+                            + b"\r\nContent-Type: image/jpeg\r\n\r\n"
+                            + jpeg
+                            + b"\r\n"
+                        )
+                if finished and jpeg is not None:
+                    break
+                time.sleep(1.0 / 60)
+
+        return Response(stream(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+    @app.route("/audio")
+    def audio():
+        with state.lock:
+            wav = state.audio_wav
+        if wav is None:
+            return ("", 404)
+        return Response(wav, mimetype="audio/wav")
+
+    @app.route("/state.json")
+    def state_json():
+        with state.lock:
+            return jsonify(
+                captions=state.captions,
+                retrieval=state.retrieval,
+                finished=state.finished,
+                video_fps=state.video_fps,
+                video_time=state.video_time,
+                effective_rate=state.effective_rate,
+            )
+
+    return app
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("video_path", type=Path)
+    parser.add_argument("--no-identity", action="store_true")
+    parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=5050)
+    args = parser.parse_args()
+
+    if not args.video_path.exists():
+        print(f"Video not found: {args.video_path}")
+        sys.exit(1)
+
+    state = DebugState()
+    worker = threading.Thread(
+        target=process_video,
+        args=(args.video_path, not args.no_identity, args.fast, state),
+        daemon=True,
+    )
+    worker.start()
+
+    app = build_app(state, args.fast)
+    print(f"Debug viewer: http://{args.host}:{args.port}")
+    app.run(host=args.host, port=args.port, threaded=True, debug=False)
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    fast = "--fast" in sys.argv
-
-    if not args:
-        print("Usage: python debug_video.py [--fast] <video_path>")
-        sys.exit(1)
-    main(Path(args[0]), fast=fast)
+    main()
