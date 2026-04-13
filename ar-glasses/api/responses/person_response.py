@@ -11,7 +11,7 @@ class PersonResponse(BaseModel):
     notes: str
     created_at: str
     last_seen: str | None
-    thumbnail_url: str | None = None
+    thumbnail: str | None = None
 
     class Config:
         from_attributes = True
