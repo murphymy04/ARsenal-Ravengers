@@ -1,110 +1,23 @@
-"""Configuration constants for the AR glasses prototype."""
+"""Top-level configuration.
 
-import os
-from pathlib import Path
+Loads `.env` (via `paths.py`), defines cross-cutting constants (Flask host/port,
+display colors) and re-exports every per-subsystem constant so existing
+`from config import X` call sites keep working.
+"""
 
-from dotenv import load_dotenv
-
-# Paths
-PROJECT_ROOT = Path(__file__).parent
-load_dotenv(PROJECT_ROOT / ".env")
-DATA_DIR = PROJECT_ROOT / "data"
-DB_PATH = DATA_DIR / "people.db"
-EDGEFACE_ROOT = PROJECT_ROOT / "edgeface"
-EDGEFACE_CHECKPOINT = EDGEFACE_ROOT / "checkpoints" / "edgeface_base.pt"
-
-# Face detection (MediaPipe BlazeFace)
-# "short_range" — Tasks API, optimised for faces < ~2 m (selfie-style)
-# "full_range"  — Solutions API, handles faces up to ~5 m (back-camera style)
-FACE_DETECTOR_MODEL = "opencv"
-DETECTION_CONFIDENCE = 0.35
-FACE_CROP_SIZE = 112  # EdgeFace expects 112x112
-
-# Face embedding
-EMBEDDING_DIM = 512
-EMBEDDING_MODEL_NAME = "edgeface_base"
-
-# Face matching
-MATCH_THRESHOLD = 0.4  # cosine similarity threshold for same person
-UNKNOWN_LABEL = "Unknown"
-
-# Unsupervised clustering
-EMBEDDING_UPDATE_INTERVAL = (
-    360  # frames between accumulating new embeddings for a recognized person
-)
-MAX_EMBEDDINGS_PER_PERSON = 20  # cap to prevent unbounded growth per person
-EMBEDDING_DIVERSITY_THRESHOLD = (
-    0.15  # min cosine distance required to store a new embedding (#8)
-)
-MIN_SIGHTINGS_TO_CLUSTER = 12  # observations needed before promoting to a real cluster
-PENDING_CLUSTER_SIMILARITY = 0.5  # cosine similarity for grouping pending observations
-PENDING_EXPIRY_FRAMES = 180  # frames of absence before discarding a pending observation
-MERGE_SIMILARITY_THRESHOLD = (
-    0.35  # similarity above which two clusters are suggested for merging
+from paths import (  # noqa: F401
+    DATA_DIR,
+    DB_PATH,
+    EDGEFACE_CHECKPOINT,
+    EDGEFACE_ROOT,
+    PROJECT_ROOT,
 )
 
-# Face quality (#1, #2)
-FACE_MIN_SIZE = 20  # px — ignore detections smaller than this (width or height)
-FACE_BLUR_THRESHOLD = 70.0  # Laplacian variance — lower for H.264 compressed video
+from input.config import *  # noqa: F401, F403
+from pipeline.config import *  # noqa: F401, F403
+from processing.config import *  # noqa: F401, F403
+from storage.config import *  # noqa: F401, F403
 
-# Speaking detection backend
-# Set SPEAKING_BACKEND = "light_asd" to use Light-ASD (audio-visual, more accurate).
-# Set SPEAKING_BACKEND = "mediapipe" to use the MediaPipe jawOpen blendshape (visual-only).
-# Set SPEAKING_BACKEND = "vad_rms" to use Silero VAD + RMS amplitude (wearer vs other).
-SPEAKING_BACKEND = "vad_rms"
-
-# MediaPipe FaceLandmarker jawOpen blendshape (used when SPEAKING_BACKEND = "mediapipe")
-SPEAKING_JAW_THRESHOLD = (
-    0.005  # jawOpen score above which the person is considered speaking
-)
-
-# Light-ASD (used when SPEAKING_BACKEND = "light_asd")
-LIGHT_ASD_WEIGHTS = (
-    DATA_DIR / "light_asd.model"
-)  # downloaded automatically on first run
-LIGHT_ASD_VIDEO_FRAMES = (
-    30  # rolling window of face crops per inference (≈1 s at 30 FPS)
-)
-LIGHT_ASD_MIN_FRAMES = 10  # minimum buffered frames before running inference
-LIGHT_ASD_INFERENCE_INTERVAL = 5  # run inference every N video frames
-LIGHT_ASD_SPEAKING_THRESHOLD = 0.25  # softmax probability above which = speaking
-
-# VAD + RMS speaker detection (used when SPEAKING_BACKEND = "vad_rms")
-VAD_THRESHOLD = 0.35  # Silero VAD probability above which = speech
-VAD_RMS_WEARER_EXCESS = 0.1  # anchored wearer RMS excess above noise floor
-VAD_RMS_OTHER_EXCESS_INIT = 0.02  # initial other speaker RMS excess estimate
-VAD_RMS_OTHER_ALPHA = 0.05  # EWMA rate for tracking other speaker mean
-VAD_RMS_NOISE_FLOOR = 0.0  # initial RMS floor before room noise calibration
-VAD_RMS_NOISE_FLOOR_ALPHA = 0.05  # slow EWMA for background noise during non-speech
-VAD_RMS_EXCESS_SMOOTHING = 0.12  # EWMA on RMS excess signal before classification
-
-# Temporal smoothing (#9)
-TEMPORAL_SMOOTHING_FRAMES = (
-    7  # identity history window length for majority-vote smoothing
-)
-FACE_MAX_MOVE_PX = 100  # max bounding-box centre movement (px) to count as same face
-
-# Camera
-CAMERA_SOURCE = 0  # default webcam
-CAMERA_WIDTH = 1536
-CAMERA_HEIGHT = 2048
-CAMERA_FPS = 30  # this is the actual framerate i am getting on my mac
-ANDROID_CAMERA_FPS = 10  # Android camera streaming target fps
-
-# Microphone
-SAMPLE_RATE = 16000
-CHUNK_DURATION = 0.5  # seconds per audio chunk
-VAD_AGGRESSIVENESS = 2  # webrtcvad aggressiveness (0-3)
-SIMULATION_AUDIO_GAIN = 1.5  # boost weak glasses mic audio for simulation
-
-# Audio processing
-WHISPER_MODEL = "small"
-WHISPER_LANGUAGE = "en"
-SILENCE_THRESHOLD = 2.0  # seconds of silence before processing
-
-# Live pipeline
-LIVE_BUFFER_SECONDS = 10  # process audio/video in N-second windows
-VISION_STRIDE = 5  # process faces every Nth frame for accelerated video processing
 
 # Display
 BBOX_COLOR = (0, 255, 0)  # green
@@ -113,32 +26,7 @@ TEXT_COLOR = (255, 255, 255)  # white
 FONT_SCALE = 0.6
 FONT_THICKNESS = 2
 
+
 # Companion app
 FLASK_HOST = "0.0.0.0"
 FLASK_PORT = 5000
-
-# Storage backend
-SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_PUBLIC_URL")
-SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-SUPABASE_TIMEOUT_SECONDS = float(os.getenv("SUPABASE_TIMEOUT_SECONDS", "30"))
-STORAGE_BACKEND = os.getenv(
-    "STORAGE_BACKEND",
-    "sqlite",
-)
-
-# Knowledge graph (Zep Graphiti → Neo4j)
-SAVE_TO_MEMORY = os.getenv("SAVE_TO_MEMORY", "false").lower() == "true"
-RETRIEVAL_ENABLED = os.getenv("RETRIEVAL_ENABLED", "false").lower() == "true"
-RETRIEVAL_COOLDOWN_SECONDS = float(os.getenv("RETRIEVAL_COOLDOWN_SECONDS", "30"))
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
-
-# HUD broadcast (Unity glasses app connects over WebSocket)
-HUD_BROADCAST_ENABLED = os.getenv("HUD_BROADCAST_ENABLED", "false").lower() == "true"
-HUD_BROADCAST_HOST = os.getenv("HUD_BROADCAST_HOST", "0.0.0.0")
-HUD_BROADCAST_PORT = int(os.getenv("HUD_BROADCAST_PORT", "8765"))
-
-# Ensure data directory exists
-DATA_DIR.mkdir(exist_ok=True)
