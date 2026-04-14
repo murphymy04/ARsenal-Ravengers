@@ -29,9 +29,7 @@
 - No deeply nested data transformations on one line. If a list comprehension has a condition and a nested loop, break it into a regular loop.
 
 ## Github styling
-- For branch and worktree names, prefix them with the github username of the user. For example timtakcs/branch-name
 - For PR descriptions, write a brief summary of the changes in bullet points. Make them easily skimmable without too many deep context references
-- Keep branch names to <= 3 words in kebab case
 
 
 ## Code Quality
@@ -82,10 +80,10 @@ Audio/VAD still processes every frame for continuity. On skipped frames, the las
 python -m pipeline.live test_videos/clip.mp4
 
 # Debug overlay — normal speed with audio sync
-python testing/debug_video.py test_videos/clip.mp4
+python dashboard.py test_videos/clip.mp4
 
 # Debug overlay — accelerated, no audio sync, uses VISION_STRIDE
-python testing/debug_video.py --fast test_videos/clip.mp4
+python dashboard.py --fast test_videos/clip.mp4
 ```
 
 Tune `VISION_STRIDE` in `config.py`. Higher = faster but less temporal resolution on face detection.
@@ -122,7 +120,7 @@ RETRIEVAL_ENABLED=True SAVE_TO_MEMORY=true python pipeline/live.py test_videos/t
 | `config.py` | All tunable constants |
 | `pipeline/live.py` | Main streaming pipeline (LivePipelineDriver) |
 | `pipeline/driver.py` | Batch video pipeline (PipelineDriver) |
-| `testing/debug_video.py` | Visual debug overlay with face boxes |
+| `dashboard.py` | Flask debug dashboard (video, captions, retrieval, live RMS graph) |
 | `processing/vad_speaker.py` | VAD + RMS speaker assignment |
 | `processing/face_detector.py` | Face detection (3 backends) |
 | `processing/face_tracker.py` | Temporal identity smoothing |
@@ -139,5 +137,5 @@ cd ar-glasses
 python pipeline/live.py test_videos/clip.mp4
 
 # Debug overlay
-python testing/debug_video.py [--fast] test_videos/clip.mp4
+python dashboard.py [--fast] test_videos/clip.mp4
 ```
