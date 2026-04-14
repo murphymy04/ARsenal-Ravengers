@@ -19,6 +19,7 @@ from typing import Callable, Optional
 
 import cv2
 import numpy as np
+from pipeline.config import HUD_BROADCAST_PORT, HUD_BROADCAST_ENABLED
 
 AUDIO_PORT = 5003
 DISCOVERY_PORT = 5002
@@ -109,6 +110,8 @@ class DiscoveryService:
                 "video_port": VIDEO_PORT,
                 "command_port": COMMAND_PORT,
                 "audio_port": AUDIO_PORT,
+                "hud_broadcast_enabled": HUD_BROADCAST_ENABLED,
+                "hud_broadcast_port": HUD_BROADCAST_PORT,
             }
         ).encode("utf-8")
         self.sock.sendto(response, addr)
