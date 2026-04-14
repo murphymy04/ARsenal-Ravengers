@@ -30,7 +30,6 @@ from pipeline.driver import combine_segments
 from pipeline.identity import FullIdentity
 from pipeline.recording_buffer import (
     ChunkData,
-    LongTurn,
     RecordingBuffer,
     detect_long_turn,
     sanitize,
@@ -196,31 +195,6 @@ class LivePipelineDriver:
         if self.save_to_memory:
             self._resolve_and_save(combined)
 
-    def _log_chunk_decision(
-        self,
-        chunk: ChunkData,
-        long_turn: LongTurn | None,
-        was_recording: bool,
-        flushable,
-    ):
-        is_recording = self.recording_buffer.flag
-        turn_str = (
-            f"long_turn={long_turn.name} ratio={long_turn.ratio:.2f}"
-            if long_turn
-            else "long_turn=none"
-        )
-        transition = ""
-        if not was_recording and is_recording:
-            transition = "  -> FLAG ON"
-        elif was_recording and not is_recording:
-            transition = f"  -> FLAG OFF (flushed {len(flushable or [])} chunks)"
-
-        print(
-            f"\n## CHUNK [{chunk.window_start:.1f}s - {chunk.window_end:.1f}s] "
-            f"{turn_str} recording={is_recording} "
-            f"quiet={self.recording_buffer.quiet_chunks}{transition}"
-        )
-
     def _store_interaction(self, person_id: int | None, segments: list[dict]):
         if not self._db:
             return
@@ -285,8 +259,8 @@ class LivePipelineDriver:
         all_diarization: list[dict] = []
         window_start = 0.0
         frame_idx = 0
-        window_face_counts: list[int] = []
-        window_speaking_frames = 0
+        frames_since_flush = 0
+        timestamp = 0.0
 
         if vision_stride > 1:
             print(
@@ -300,39 +274,23 @@ class LivePipelineDriver:
 
                 chunk = mic.advance_frame()
                 is_vision_frame = frame_idx % vision_stride == 0
-                face_count, speaking_count = diarization.process_frame(
+                diarization.process_frame(
                     frame, chunk, frame_idx, timestamp, is_vision_frame
                 )
 
-                window_face_counts.append(face_count)
-                window_speaking_frames += speaking_count
                 frame_idx += 1
+                frames_since_flush += 1
 
                 if timestamp - window_start >= LIVE_BUFFER_SECONDS:
-                    n_frames = len(window_face_counts)
-                    avg_faces = sum(window_face_counts) / n_frames if n_frames else 0
-                    print(
-                        f"\n  [debug] {n_frames} frames, "
-                        f"avg {avg_faces:.1f} faces/frame, "
-                        f"{window_speaking_frames} speaking-true frames"
-                    )
                     combined, diarization_segs = self.flush_window(
                         diarization, mic, window_start, timestamp
                     )
                     all_combined.extend(combined)
                     all_diarization.extend(diarization_segs)
                     window_start = timestamp
-                    window_face_counts = []
-                    window_speaking_frames = 0
+                    frames_since_flush = 0
 
-            if window_face_counts:
-                n_frames = len(window_face_counts)
-                avg_faces = sum(window_face_counts) / n_frames if n_frames else 0
-                print(
-                    f"\n  [debug] {n_frames} frames, "
-                    f"avg {avg_faces:.1f} faces/frame, "
-                    f"{window_speaking_frames} speaking-true frames"
-                )
+            if frames_since_flush:
                 combined, diarization_segs = self.flush_window(
                     diarization, mic, window_start, timestamp
                 )
@@ -385,15 +343,11 @@ class LivePipelineDriver:
             window_start=window_start,
             window_end=window_end,
         )
-        was_recording = self.recording_buffer.flag
         flushable = self.recording_buffer.ingest(chunk, long_turn)
-        self._log_chunk_decision(chunk, long_turn, was_recording, flushable)
         if flushable is not None:
             self._sanitize_and_flush(flushable)
 
-        print(f"\n{'=' * 60}")
-        print(f"[{window_start:.1f}s - {window_end:.1f}s]")
-        print(f"{'=' * 60}")
+        print(f"\n[{window_start:.1f}s - {window_end:.1f}s]")
         print(f"  ASD segments ({len(diarization_segments)}):")
         for seg in diarization_segments:
             print(

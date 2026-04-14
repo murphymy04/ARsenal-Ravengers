@@ -30,6 +30,7 @@ Flags:
 """
 
 import argparse
+import logging
 import math
 import queue
 import sys
@@ -74,6 +75,8 @@ try:
     from pipeline.retrieval import RetrievalWorker
 except ImportError:
     RetrievalWorker = None
+
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
 class RmsLiveGraph:
@@ -400,11 +403,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("video_path", type=Path, nargs="?", help="Video file to play.")
-    parser.add_argument("--glasses", action="store_true", help="Use live glasses stream.")
-    parser.add_argument("--no-identity", action="store_true", help="Disable EdgeFace identity.")
-    parser.add_argument("--fast", action="store_true", help="Skip audio + throttle; use VISION_STRIDE.")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
-    parser.add_argument("--port", type=int, default=5050, help="Bind port (default 5050).")
+    parser.add_argument(
+        "--glasses", action="store_true", help="Use live glasses stream."
+    )
+    parser.add_argument(
+        "--no-identity", action="store_true", help="Disable EdgeFace identity."
+    )
+    parser.add_argument(
+        "--fast", action="store_true", help="Skip audio + throttle; use VISION_STRIDE."
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind host (default 127.0.0.1)."
+    )
+    parser.add_argument(
+        "--port", type=int, default=5050, help="Bind port (default 5050)."
+    )
     args = parser.parse_args()
 
     if not args.glasses:
@@ -427,7 +440,9 @@ def main():
     worker.start()
 
     print(f"Dashboard: http://{args.host}:{args.port}")
-    socketio.run(app, host=args.host, port=args.port, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(
+        app, host=args.host, port=args.port, debug=False, allow_unsafe_werkzeug=True
+    )
 
 
 if __name__ == "__main__":
