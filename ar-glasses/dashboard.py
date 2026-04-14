@@ -1,16 +1,36 @@
-"""Flask debug viewer for the diarization + retrieval pipeline.
+"""Flask debug dashboard for the diarization + retrieval pipeline.
 
-Plays a video through the real LivePipelineDriver and streams:
+Streams:
   * annotated MJPEG frames with face boxes, identity labels, speaking rings
   * a caption feed populated each window flush (speaker + transcript)
   * a retrieval panel populated from driver.retrieval_results
+  * a live RMS graph of the incoming audio stream (wallclock-paced)
+
+Tabs:
+  Video  — main view with captions + retrieval side panels
+  RMS    — plotly line chart of audio RMS over wallclock seconds
 
 Default mode serves audio via a browser <audio> tag and throttles the
 processing loop to video FPS for best-effort A/V sync. --fast skips
 audio, skips the throttle, and uses VISION_STRIDE.
+
+Usage:
+  python dashboard.py path/to/video.mp4
+  python dashboard.py --fast path/to/video.mp4
+  python dashboard.py --glasses
+  python dashboard.py --no-identity path/to/video.mp4
+  python dashboard.py --host 0.0.0.0 --port 5050 path/to/video.mp4
+
+Flags:
+  video_path      Positional path to the video file (omit with --glasses).
+  --glasses       Run against a live glasses stream instead of a file.
+  --no-identity   Disable the EdgeFace identity module (faster, no names).
+  --fast          Skip audio + throttle + apply VISION_STRIDE.
+  --host / --port Bind address for the Flask server.
 """
 
 import argparse
+import math
 import queue
 import sys
 import threading
@@ -19,10 +39,12 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cv2
+import numpy as np
 from flask import Flask, Response, jsonify, render_template
+from flask_socketio import SocketIO
 
 from config import (
     CAMERA_FPS,
@@ -52,6 +74,55 @@ try:
     from pipeline.retrieval import RetrievalWorker
 except ImportError:
     RetrievalWorker = None
+
+
+class RmsLiveGraph:
+    """Paces incoming audio chunks to wallclock and emits RMS points over SocketIO.
+
+    push_audio() is cheap: enqueue only. A background thread drains the queue
+    and emits one point per chunk, delayed so that the stream of emitted
+    points advances at 1s per wallclock second regardless of how fast the
+    producer runs.
+    """
+
+    def __init__(self, socketio: SocketIO, sample_rate: int):
+        self._socketio = socketio
+        self._sample_rate = sample_rate
+        self._queue: queue.Queue[tuple[np.ndarray, float] | None] = queue.Queue()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._drip_loop, daemon=True)
+        self._thread.start()
+
+    def push_audio(self, chunk: np.ndarray, video_time: float) -> None:
+        self._queue.put((chunk.copy(), float(video_time)))
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._queue.put(None)
+
+    def _drip_loop(self) -> None:
+        wall_start: float | None = None
+        video_start: float | None = None
+        while not self._stop.is_set():
+            item = self._queue.get()
+            if item is None:
+                return
+            chunk, video_time = item
+
+            if wall_start is None:
+                wall_start = time.perf_counter()
+                video_start = video_time
+
+            target_wall = wall_start + (video_time - video_start)
+            delay = target_wall - time.perf_counter()
+            if delay > 0:
+                time.sleep(delay)
+
+            rms = float(np.sqrt(np.mean(np.square(chunk.astype(np.float32)))))
+            if not math.isfinite(rms):
+                rms = 0.0
+
+            self._socketio.emit("rms", {"t": video_time - video_start, "rms": rms})
 
 
 @dataclass
@@ -142,6 +213,7 @@ def process_video(
     use_identity: bool,
     fast: bool,
     state: DebugState,
+    rms_graph: RmsLiveGraph,
     glasses: bool = False,
 ):
     glasses_server = None
@@ -185,7 +257,12 @@ def process_video(
     )
     diarization.open(fps)
 
-    vision_stride = VISION_STRIDE if (fast and not glasses) else 1
+    if glasses:
+        vision_stride = 1
+    elif fast:
+        vision_stride = VISION_STRIDE
+    else:
+        vision_stride = 2
 
     frame_idx = 0
     window_start = 0.0
@@ -196,6 +273,7 @@ def process_video(
         for frame in camera.frames():
             timestamp = camera.last_timestamp_seconds if glasses else frame_idx / fps
             chunk = mic.advance_frame()
+            rms_graph.push_audio(chunk, timestamp)
             is_vision_frame = frame_idx % vision_stride == 0
 
             diarization.process_frame(
@@ -256,16 +334,17 @@ def process_video(
             glasses_server.stop()
         with state.lock:
             state.finished = True
-        print("[debug_video] processing finished")
+        print("[dashboard] processing finished")
 
 
-def build_app(state: DebugState, fast: bool) -> Flask:
+def build_app(state: DebugState, fast: bool) -> tuple[Flask, SocketIO]:
     template_dir = Path(__file__).parent / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
+    socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
     @app.route("/")
     def index():
-        return render_template("debug_video.html", fast=fast)
+        return render_template("dashboard.html", fast=fast)
 
     @app.route("/video")
     def video():
@@ -312,17 +391,20 @@ def build_app(state: DebugState, fast: bool) -> Flask:
                 effective_rate=state.effective_rate,
             )
 
-    return app
+    return app, socketio
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("video_path", type=Path, nargs="?")
-    parser.add_argument("--glasses", action="store_true")
-    parser.add_argument("--no-identity", action="store_true")
-    parser.add_argument("--fast", action="store_true")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=5050)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("video_path", type=Path, nargs="?", help="Video file to play.")
+    parser.add_argument("--glasses", action="store_true", help="Use live glasses stream.")
+    parser.add_argument("--no-identity", action="store_true", help="Disable EdgeFace identity.")
+    parser.add_argument("--fast", action="store_true", help="Skip audio + throttle; use VISION_STRIDE.")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
+    parser.add_argument("--port", type=int, default=5050, help="Bind port (default 5050).")
     args = parser.parse_args()
 
     if not args.glasses:
@@ -333,17 +415,19 @@ def main():
             sys.exit(1)
 
     state = DebugState()
+    app, socketio = build_app(state, args.fast)
+    rms_graph = RmsLiveGraph(socketio, sample_rate=SAMPLE_RATE)
+
     worker = threading.Thread(
         target=process_video,
-        args=(args.video_path, not args.no_identity, args.fast, state),
+        args=(args.video_path, not args.no_identity, args.fast, state, rms_graph),
         kwargs={"glasses": args.glasses},
         daemon=True,
     )
     worker.start()
 
-    app = build_app(state, args.fast)
-    print(f"Debug viewer: http://{args.host}:{args.port}")
-    app.run(host=args.host, port=args.port, threaded=True, debug=False)
+    print(f"Dashboard: http://{args.host}:{args.port}")
+    socketio.run(app, host=args.host, port=args.port, debug=False, allow_unsafe_werkzeug=True)
 
 
 if __name__ == "__main__":
