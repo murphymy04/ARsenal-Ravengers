@@ -33,6 +33,7 @@ ar-glasses/data/
 .idea/
 *.swp
 *.swo
+/prompts
 
 # OS
 .DS_Store
