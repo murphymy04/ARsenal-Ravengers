@@ -382,7 +382,22 @@ if __name__ == "__main__":
     transcription = TranscriptionPipeline()
     driver = LivePipelineDriver(identity, transcription, db)
 
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and sys.argv[1] == "--glasses":
+        from input.glasses_adapter import GlassesServer
+
+        server = GlassesServer(sample_rate=SAMPLE_RATE)
+        camera, mic, clock_fn = server.start()
+        try:
+            driver.run(
+                camera,
+                mic=mic,
+                clock_fn=clock_fn,
+                fps=CAMERA_FPS,
+                vision_stride=VISION_STRIDE,
+            )
+        finally:
+            server.stop()
+    elif len(sys.argv) > 1:
         video_path = Path(sys.argv[1])
         if not video_path.exists():
             print(f"Video not found: {video_path}")
