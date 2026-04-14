@@ -58,12 +58,14 @@ def detect_long_turn(
 
     n_bins = max(1, round((window_end - window_start) / bin_size))
     win_bins = round(turn_length / bin_size)
+
     if win_bins == 0 or win_bins > n_bins:
         return None
 
     persons: list[tuple[int | None, str]] = []
+
     for seg in diarization_segments:
-        key = (seg.get("person_id"), seg["name"])
+        key = (seg["person_id"], seg["name"])
         if key not in persons:
             persons.append(key)
 
@@ -72,21 +74,24 @@ def detect_long_turn(
     for person_id, name in persons:
         mask = [0] * n_bins
         for seg in diarization_segments:
-            if (seg.get("person_id"), seg["name"]) != (person_id, name):
+            if (seg["person_id"], seg["name"]) != (person_id, name):
                 continue
+            
             start_bin = max(0, int((seg["start"] - window_start) / bin_size))
             end_bin = min(n_bins, int((seg["end"] - window_start) / bin_size))
+
             for i in range(start_bin, end_bin):
                 mask[i] = 1
 
-        cumsum = [0]
-        for v in mask:
-            cumsum.append(cumsum[-1] + v)
-
         threshold = win_bins * dominance
+        speaking_bins = sum(mask[:win_bins])
+        
         for i in range(n_bins - win_bins + 1):
-            speaking_bins = cumsum[i + win_bins] - cumsum[i]
+            if i > 0:
+                speaking_bins += mask[i + win_bins - 1] - mask[i - 1]
+
             ratio = speaking_bins / win_bins
+
             if speaking_bins >= threshold and (best is None or ratio > best.ratio):
                 best = LongTurn(person_id=person_id, name=name, ratio=ratio)
                 break
