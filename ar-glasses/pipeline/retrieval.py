@@ -13,10 +13,11 @@ import queue
 import threading
 from datetime import UTC, datetime
 
-from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, RETRIEVAL_COOLDOWN_SECONDS
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodicNode
 from groq import Groq
+
+from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, RETRIEVAL_COOLDOWN_SECONDS
 
 FORMATTER_MODEL = "qwen/qwen3-32b"
 
@@ -158,6 +159,7 @@ class RetrievalWorker:
         except Exception as exc:
             print(f"[retrieval] error formatting context for {query_name}: {exc}")
             return {
+                "name": query_name,
                 "last_spoke": (
                     _humanize_delta(last_episode.valid_at, datetime.now(UTC))
                     if last_episode
@@ -189,6 +191,7 @@ class RetrievalWorker:
     ) -> dict:
         if not last_episode:
             return {
+                "name": name,
                 "last_spoke": None,
                 "last_spoke_about": None,
                 "ask_about": None,
@@ -197,6 +200,7 @@ class RetrievalWorker:
 
         formatted = _format_context(name, facts, last_episode)
         return {
+            "name": name,
             "last_spoke": _humanize_delta(last_episode.valid_at, datetime.now(UTC)),
             "last_spoke_about": formatted["last_spoke_about"],
             "ask_about": formatted["ask_about"],
