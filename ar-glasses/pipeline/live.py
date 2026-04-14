@@ -8,6 +8,7 @@ swappable audio source (Microphone vs SimulatedMic) and clock function
 (wall-clock vs frame-rate-based).
 """
 
+import argparse
 import io
 import json
 import queue
@@ -21,6 +22,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cv2
 import numpy as np
+from input.camera import Camera
+from input.microphone import Microphone, SimulatedMic
+from models import IdentityModule
+from pipeline.diarization import DiarizationPipeline
+from pipeline.driver import combine_segments
+from pipeline.identity import FullIdentity
+from pipeline.recording_buffer import (
+    ChunkData,
+    LongTurn,
+    RecordingBuffer,
+    detect_long_turn,
+    sanitize,
+)
+from pipeline.transcription import TranscriptionPipeline
+from processing.face_embedder import FaceEmbedder
+from processing.face_matcher import FaceMatcher
+from storage.database import Database
+
 from config import (
     CAMERA_FPS,
     HUD_BROADCAST_ENABLED,
@@ -34,17 +53,6 @@ from config import (
     SIMULATION_AUDIO_GAIN,
     VISION_STRIDE,
 )
-from input.camera import Camera
-from input.microphone import Microphone, SimulatedMic
-from models import IdentityModule
-from pipeline.conversation_end import is_conversation_end
-from pipeline.diarization import DiarizationPipeline
-from pipeline.driver import combine_segments
-from pipeline.identity import FullIdentity
-from pipeline.transcription import TranscriptionPipeline
-from processing.face_embedder import FaceEmbedder
-from processing.face_matcher import FaceMatcher
-from storage.database import Database
 
 try:
     from pipeline.knowledge import flush_memory, save_to_memory
@@ -113,7 +121,7 @@ class LivePipelineDriver:
         self.transcription = transcription
         self._db = db
         self.save_to_memory = SAVE_TO_MEMORY
-        self.conversation_buffer: list[dict] = []
+        self.recording_buffer = RecordingBuffer()
         self.retrieval_results: list[tuple] = []
         self._retrieval_result_queue = None
         self._hud_server = None
@@ -166,6 +174,52 @@ class LivePipelineDriver:
         )
         save_to_memory(resolved, wearer_name=wearer_name, other_name=person.name)
         print(f"  [knowledge] flushed to Zep with resolved name: {person.name}")
+
+    def _sanitize_and_flush(self, chunks: list[ChunkData]):
+        sanitized = sanitize(chunks)
+        combined: list[dict] = []
+        for chunk in sanitized:
+            combined.extend(chunk.combined)
+        if not combined:
+            return
+        window_start = sanitized[0].window_start
+        window_end = sanitized[-1].window_end
+        print(
+            f"\n## RECORDING FLUSH [{window_start:.1f}s - {window_end:.1f}s] "
+            f"{len(sanitized)} chunks, {len(combined)} segments"
+        )
+        for seg in combined:
+            print(
+                f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] "
+                f"{seg['speaker']}: {seg['text']}"
+            )
+        if self.save_to_memory:
+            self._resolve_and_save(combined)
+
+    def _log_chunk_decision(
+        self,
+        chunk: ChunkData,
+        long_turn: LongTurn | None,
+        was_recording: bool,
+        flushable,
+    ):
+        is_recording = self.recording_buffer.flag
+        turn_str = (
+            f"long_turn={long_turn.name} ratio={long_turn.ratio:.2f}"
+            if long_turn
+            else "long_turn=none"
+        )
+        transition = ""
+        if not was_recording and is_recording:
+            transition = "  -> FLAG ON"
+        elif was_recording and not is_recording:
+            transition = f"  -> FLAG OFF (flushed {len(flushable or [])} chunks)"
+
+        print(
+            f"\n## CHUNK [{chunk.window_start:.1f}s - {chunk.window_end:.1f}s] "
+            f"{turn_str} recording={is_recording} "
+            f"quiet={self.recording_buffer.quiet_chunks}{transition}"
+        )
 
     def _store_interaction(self, person_id: int | None, segments: list[dict]):
         if not self._db:
@@ -286,8 +340,9 @@ class LivePipelineDriver:
                 all_diarization.extend(diarization_segs)
 
         finally:
-            if self.save_to_memory and self.conversation_buffer:
-                self._resolve_and_save(self.conversation_buffer)
+            remaining = self.recording_buffer.drain()
+            if remaining:
+                self._sanitize_and_flush(remaining)
             if self.save_to_memory and flush_memory:
                 print("[knowledge] waiting for pending saves...")
                 flush_memory()
@@ -321,12 +376,20 @@ class LivePipelineDriver:
 
         combined = combine_segments(diarization_segments, transcript_segments)
 
-        if self.save_to_memory and combined:
-            self.conversation_buffer.extend(combined)
-
-            if is_conversation_end(combined):
-                self._resolve_and_save(self.conversation_buffer)
-                self.conversation_buffer = []
+        long_turn = detect_long_turn(diarization_segments, window_start, window_end)
+        chunk = ChunkData(
+            audio=audio,
+            diarization_segments=diarization_segments,
+            transcript_segments=transcript_segments,
+            combined=combined,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        was_recording = self.recording_buffer.flag
+        flushable = self.recording_buffer.ingest(chunk, long_turn)
+        self._log_chunk_decision(chunk, long_turn, was_recording, flushable)
+        if flushable is not None:
+            self._sanitize_and_flush(flushable)
 
         print(f"\n{'=' * 60}")
         print(f"[{window_start:.1f}s - {window_end:.1f}s]")
@@ -377,12 +440,19 @@ if __name__ == "__main__":
     AR_ROOT = Path(__file__).resolve().parent.parent
     SIMULATION_CACHE_DIR = AR_ROOT / "data" / "simulation_cache"
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("source", nargs="?", help="video file or '--glasses'")
+    parser.add_argument(
+        "--boundary", type=float, default=None, help="VAD static RMS boundary"
+    )
+    args, _ = parser.parse_known_args()
+
     db = Database()
     identity = FullIdentity(FaceEmbedder(), FaceMatcher(), db)
     transcription = TranscriptionPipeline()
     driver = LivePipelineDriver(identity, transcription, db)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "--glasses":
+    if args.source == "--glasses":
         from input.glasses_adapter import GlassesServer
 
         server = GlassesServer(sample_rate=SAMPLE_RATE)
@@ -394,11 +464,12 @@ if __name__ == "__main__":
                 clock_fn=clock_fn,
                 fps=CAMERA_FPS,
                 vision_stride=VISION_STRIDE,
+                static_boundary=args.boundary,
             )
         finally:
             server.stop()
-    elif len(sys.argv) > 1:
-        video_path = Path(sys.argv[1])
+    elif args.source:
+        video_path = Path(args.source)
         if not video_path.exists():
             print(f"Video not found: {video_path}")
             sys.exit(1)
@@ -419,6 +490,7 @@ if __name__ == "__main__":
             clock_fn=lambda fi, f=fps: fi / f,
             fps=fps,
             vision_stride=VISION_STRIDE,
+            static_boundary=args.boundary,
         )
 
         with open(cache_file, "w") as f:
@@ -426,4 +498,4 @@ if __name__ == "__main__":
         print(f"Saved simulation cache: {cache_file.name}")
     else:
         camera = Camera()
-        driver.run(camera)
+        driver.run(camera, static_boundary=args.boundary)
