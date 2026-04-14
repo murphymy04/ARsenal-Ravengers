@@ -76,7 +76,7 @@ def detect_long_turn(
         for seg in diarization_segments:
             if (seg["person_id"], seg["name"]) != (person_id, name):
                 continue
-            
+
             start_bin = max(0, int((seg["start"] - window_start) / bin_size))
             end_bin = min(n_bins, int((seg["end"] - window_start) / bin_size))
 
@@ -85,7 +85,7 @@ def detect_long_turn(
 
         threshold = win_bins * dominance
         speaking_bins = sum(mask[:win_bins])
-        
+
         for i in range(n_bins - win_bins + 1):
             if i > 0:
                 speaking_bins += mask[i + win_bins - 1] - mask[i - 1]

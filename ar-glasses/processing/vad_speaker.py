@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+
 from config import (
     CAMERA_FPS,
     DATA_DIR,

@@ -17,7 +17,6 @@ _AR_ROOT = Path(__file__).resolve().parent.parent
 if str(_AR_ROOT) not in sys.path:
     sys.path.insert(0, str(_AR_ROOT))
 
-from config import CAMERA_FPS, SAMPLE_RATE
 from models import TranscriptSegment
 from pipeline.conversation_end import is_conversation_end
 from pipeline.diarization import DiarizationPipeline
@@ -26,6 +25,8 @@ from pipeline.transcription import TranscriptionPipeline
 from processing.face_embedder import FaceEmbedder
 from processing.face_matcher import FaceMatcher
 from storage.database import Database
+
+from config import CAMERA_FPS, SAMPLE_RATE
 
 _DIARIZATION_CACHE_DIR = _AR_ROOT / "data" / "diarization_cache"
 

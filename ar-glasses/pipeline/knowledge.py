@@ -4,10 +4,11 @@ import logging
 import threading
 from datetime import UTC, datetime
 
-from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
 from pydantic import BaseModel, Field
+
+from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 logging.getLogger("neo4j.debug").setLevel(logging.CRITICAL)
 logging.getLogger("neo4j.io").setLevel(logging.CRITICAL)

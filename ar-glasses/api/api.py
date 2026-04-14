@@ -33,16 +33,16 @@ from models import Person
 from storage.database import Database
 
 from api.requests import (
+    InteractionRequest,
     LabelRequest,
     MergeRequest,
     NotesRequest,
-    InteractionRequest,
 )
 from api.responses import (
+    InteractionResponse,
     LabelResponse,
     PersonResponse,
     UnlabeledResponse,
-    InteractionResponse,
 )
 
 try:
@@ -112,7 +112,7 @@ class PeopleAPI:
                         thumbnail_b64 = base64.b64encode(buffer.tobytes()).decode("utf-8")
                     except Exception as e:
                         print(f"Error encoding thumbnail for person {p.person_id}: {e}")
-                
+
                 results.append(
                     UnlabeledResponse(
                         person_id=p.person_id,
@@ -159,7 +159,7 @@ class PeopleAPI:
                         name=p.name,
                         is_labeled=p.is_labeled,
                         embedding_count=len(p.embeddings),
-                        notes=p.notes, 
+                        notes=p.notes,
                         created_at=p.created_at.isoformat() if p.created_at else "",
                         last_seen=p.last_seen.isoformat() if p.last_seen else None,
                         thumbnail=thumbnail_b64,
@@ -330,7 +330,7 @@ class PeopleAPI:
             """
             # Build mapping of person_id -> primary person_id for each name
             person_id_mapping = self._get_primary_person_id_mapping()
-            
+
             rows = self.db._conn.execute(
                 "SELECT i.interaction_id, i.person_id, i.timestamp, i.transcript, i.context, p.name "
                 "FROM interactions i "
@@ -362,7 +362,7 @@ class PeopleAPI:
             """
             # Build mapping of person_id -> primary person_id for each name
             person_id_mapping = self._get_primary_person_id_mapping()
-            
+
             rows = self.db._conn.execute(
                 "SELECT i.interaction_id, i.person_id, i.timestamp, i.transcript, i.context, p.name "
                 "FROM interactions i "
@@ -461,14 +461,14 @@ class PeopleAPI:
         people = self.db.get_all_people()
         mapping = {}
         name_to_primary_id = {}
-        
+
         # Sort by person_id to ensure lower IDs are primary
         for person in sorted(people, key=lambda p: p.person_id):
             if person.is_labeled:
                 # First labeled person becomes primary
                 if person.name not in name_to_primary_id:
                     name_to_primary_id[person.name] = person.person_id
-            
+
             # Only map if a labeled primary exists
             if person.name in name_to_primary_id:
                 mapping[person.person_id] = name_to_primary_id[person.name]
@@ -494,12 +494,12 @@ class PeopleAPI:
             new_name: The new name to use for the person in transcripts
         """
         interactions = self.db.get_interactions(person_id, limit=1000)
-        
+
         for interaction in interactions:
             transcript = interaction["transcript"]
             lines = transcript.split("\n")
             updated_lines = []
-            
+
             for line in lines:
                 # Replace any non-Wearer speaker with the new_name
                 if ": " in line:
@@ -508,9 +508,9 @@ class PeopleAPI:
                         # Replace old speaker name with new name
                         line = f"{new_name}: {text}"
                 updated_lines.append(line)
-            
+
             updated_transcript = "\n".join(updated_lines)
-            
+
             # Only update if transcript changed
             if updated_transcript != transcript:
                 self.db.update_interaction_transcript(
@@ -530,7 +530,7 @@ class PeopleAPI:
         segments = []
         if not transcript:
             return segments
-            
+
         lines = transcript.split("\n")
         for line in lines:
             if ": " in line:
@@ -551,14 +551,14 @@ class PeopleAPI:
             person_name: The labeled person name
         """
         if save_to_memory is None:
-            print(f"  [knowledge] skipping Zep flush — knowledge support unavailable")
+            print("  [knowledge] skipping Zep flush — knowledge support unavailable")
             return
-            
+
         interactions = self.db.get_interactions(person_id, limit=1000)
         if not interactions:
             print(f"  [knowledge] no interactions to flush for {person_name}")
             return
-        
+
         # Convert all interactions to segments
         all_segments = []
         for interaction in interactions:
@@ -566,7 +566,7 @@ class PeopleAPI:
                 interaction["transcript"], person_name
             )
             all_segments.extend(segments)
-        
+
         if all_segments:
             save_to_memory(all_segments)
             print(f"  [knowledge] flushed {len(all_segments)} segments to Zep for {person_name}")

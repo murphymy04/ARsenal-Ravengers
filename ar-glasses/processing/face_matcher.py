@@ -7,8 +7,9 @@ and is more robust to individual outlier embeddings.
 """
 
 import numpy as np
-from config import MATCH_THRESHOLD, UNKNOWN_LABEL
 from models import FaceEmbedding, IdentityMatch, Person
+
+from config import MATCH_THRESHOLD, UNKNOWN_LABEL
 
 
 class FaceMatcher:

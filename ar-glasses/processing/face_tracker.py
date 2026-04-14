@@ -9,8 +9,9 @@ per-frame flicker caused by occasional mismatches.
 from collections import Counter, deque
 
 import numpy as np
-from config import FACE_MAX_MOVE_PX, TEMPORAL_SMOOTHING_FRAMES
 from models import DetectedFace, IdentityMatch
+
+from config import FACE_MAX_MOVE_PX, TEMPORAL_SMOOTHING_FRAMES
 
 
 class FaceTracker:
