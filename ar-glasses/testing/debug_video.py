@@ -25,9 +25,11 @@ import cv2
 from flask import Flask, Response, jsonify, render_template
 
 from config import (
+    CAMERA_FPS,
     LIVE_BUFFER_SECONDS,
     RETRIEVAL_COOLDOWN_SECONDS,
     RETRIEVAL_ENABLED,
+    SAMPLE_RATE,
     SIMULATION_AUDIO_GAIN,
     VISION_STRIDE,
 )
@@ -135,16 +137,32 @@ def drain_new_retrieval(
     return rendered, len(driver.retrieval_results)
 
 
-def process_video(video_path: Path, use_identity: bool, fast: bool, state: DebugState):
-    fps = get_video_fps(video_path)
-    audio = extract_audio_pcm(video_path)
+def process_video(
+    video_path: Path | None,
+    use_identity: bool,
+    fast: bool,
+    state: DebugState,
+    glasses: bool = False,
+):
+    glasses_server = None
+    if glasses:
+        from input.glasses_adapter import GlassesServer
 
-    with state.lock:
-        state.audio_wav = pcm_to_wav(audio)
-        state.video_fps = fps
+        glasses_server = GlassesServer(sample_rate=SAMPLE_RATE)
+        camera, mic, _ = glasses_server.start()
+        fps = CAMERA_FPS
+        with state.lock:
+            state.video_fps = fps
+    else:
+        fps = get_video_fps(video_path)
+        audio = extract_audio_pcm(video_path)
 
-    mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
-    camera = Camera(source=str(video_path))
+        with state.lock:
+            state.audio_wav = pcm_to_wav(audio)
+            state.video_fps = fps
+
+        mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
+        camera = Camera(source=str(video_path))
 
     db, identity = build_identity(use_identity)
     transcription = TranscriptionPipeline()
@@ -167,7 +185,7 @@ def process_video(video_path: Path, use_identity: bool, fast: bool, state: Debug
     )
     diarization.open(fps)
 
-    vision_stride = VISION_STRIDE if fast else 1
+    vision_stride = VISION_STRIDE if (fast and not glasses) else 1
 
     frame_idx = 0
     window_start = 0.0
@@ -176,7 +194,7 @@ def process_video(video_path: Path, use_identity: bool, fast: bool, state: Debug
 
     try:
         for frame in camera.frames():
-            timestamp = frame_idx / fps
+            timestamp = camera.last_timestamp_seconds if glasses else frame_idx / fps
             chunk = mic.advance_frame()
             is_vision_frame = frame_idx % vision_stride == 0
 
@@ -222,7 +240,7 @@ def process_video(video_path: Path, use_identity: bool, fast: bool, state: Debug
 
             frame_idx += 1
 
-        final_end = frame_idx / fps
+        final_end = camera.last_timestamp_seconds if glasses else frame_idx / fps
         if final_end > window_start:
             combined, _ = driver.flush_window(diarization, mic, window_start, final_end)
             new_retrieval, retrieval_seen = drain_new_retrieval(driver, retrieval_seen)
@@ -234,6 +252,8 @@ def process_video(video_path: Path, use_identity: bool, fast: bool, state: Debug
             retrieval_worker.stop()
         diarization.close()
         camera.close()
+        if glasses_server:
+            glasses_server.stop()
         with state.lock:
             state.finished = True
         print("[debug_video] processing finished")
@@ -297,21 +317,26 @@ def build_app(state: DebugState, fast: bool) -> Flask:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("video_path", type=Path)
+    parser.add_argument("video_path", type=Path, nargs="?")
+    parser.add_argument("--glasses", action="store_true")
     parser.add_argument("--no-identity", action="store_true")
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5050)
     args = parser.parse_args()
 
-    if not args.video_path.exists():
-        print(f"Video not found: {args.video_path}")
-        sys.exit(1)
+    if not args.glasses:
+        if args.video_path is None:
+            parser.error("video_path is required unless --glasses is set")
+        if not args.video_path.exists():
+            print(f"Video not found: {args.video_path}")
+            sys.exit(1)
 
     state = DebugState()
     worker = threading.Thread(
         target=process_video,
         args=(args.video_path, not args.no_identity, args.fast, state),
+        kwargs={"glasses": args.glasses},
         daemon=True,
     )
     worker.start()
