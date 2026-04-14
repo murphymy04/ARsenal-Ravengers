@@ -24,6 +24,14 @@ NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
 
 
+# Recording flag heuristic (replaces LLM conversation-end detection)
+DIARIZATION_TURN_LENGTH = float(os.getenv("DIARIZATION_TURN_LENGTH", "3.0"))
+DIARIZATION_TURN_DOMINANCE = float(os.getenv("DIARIZATION_TURN_DOMINANCE", "0.9"))
+DIARIZATION_QUIET_CHUNKS_TO_FLUSH = int(
+    os.getenv("DIARIZATION_QUIET_CHUNKS_TO_FLUSH", "2")
+)
+
+
 # HUD broadcast (Unity glasses app connects over WebSocket)
 HUD_BROADCAST_ENABLED = os.getenv("HUD_BROADCAST_ENABLED", "false").lower() == "true"
 HUD_BROADCAST_HOST = os.getenv("HUD_BROADCAST_HOST", "0.0.0.0")

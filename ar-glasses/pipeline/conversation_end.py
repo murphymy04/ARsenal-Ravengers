@@ -11,7 +11,14 @@ if str(_AR_ROOT) not in sys.path:
 
 load_dotenv(_AR_ROOT / ".env")
 
-_client = Groq()
+_client: Groq | None = None
+
+
+def _get_client() -> Groq:
+    global _client
+    if _client is None:
+        _client = Groq()
+    return _client
 
 _SYSTEM_PROMPT = (
     "You are analyzing a transcript snippet from a live conversation. "
@@ -42,7 +49,7 @@ def is_conversation_end(segments: list[dict]) -> bool:
 
     transcript = "\n".join(f"{s['speaker']}: {s['text']}" for s in segments)
 
-    response = _client.chat.completions.create(
+    response = _get_client().chat.completions.create(
         model="meta-llama/llama-4-scout-17b-16e-instruct",
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},

@@ -40,6 +40,7 @@ Thumbs.db
 
 # Logs
 *.log
+ar-glasses/logs/
 
 # dotenv
 .env
