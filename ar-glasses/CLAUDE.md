@@ -28,6 +28,12 @@
 - Do not use lazy or inline imports inside functions unless there is a documented, unavoidable reason such as a hard optional dependency or import cycle. Default to top-level imports.
 - No deeply nested data transformations on one line. If a list comprehension has a condition and a nested loop, break it into a regular loop.
 
+## Github styling
+- For branch and worktree names, prefix them with the github username of the user. For example timtakcs/branch-name
+- For PR descriptions, write a brief summary of the changes in bullet points. Make them easily skimmable without too many deep context references
+- Keep branch names to <= 3 words in kebab case
+
+
 ## Code Quality
 - Run `ruff check --fix .` and `ruff format .` after modifying Python files
 - All code must pass `ruff check` with zero violations
