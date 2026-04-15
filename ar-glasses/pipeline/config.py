@@ -18,7 +18,7 @@ VISION_STRIDE = 5  # process faces every Nth frame for accelerated video process
 # Knowledge graph (Zep Graphiti → Neo4j)
 SAVE_TO_MEMORY = os.getenv("SAVE_TO_MEMORY", "false").lower() == "true"
 RETRIEVAL_ENABLED = os.getenv("RETRIEVAL_ENABLED", "false").lower() == "true"
-RETRIEVAL_COOLDOWN_SECONDS = float(os.getenv("RETRIEVAL_COOLDOWN_SECONDS", "30"))
+RETRIEVAL_COOLDOWN_SECONDS = float(os.getenv("RETRIEVAL_COOLDOWN_SECONDS", "10"))
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")

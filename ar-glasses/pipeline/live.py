@@ -195,6 +195,37 @@ class LivePipelineDriver:
         if self.save_to_memory:
             self._resolve_and_save(combined)
 
+    def _publish_retrieval_results(self):
+        if not self._retrieval_result_queue:
+            return
+        if drain_results is None:
+            raise RuntimeError(
+                "Retrieval result queue exists but drain_results is unavailable."
+            )
+        for result in drain_results(self._retrieval_result_queue):
+            self.retrieval_results.append(result)
+            person_name, person_id, context = result
+            print(f"\n  [retrieval] {person_name}:")
+            print(f"    last_spoke:       {context['last_spoke']}")
+            print(f"    last_spoke_about: {context['last_spoke_about']}")
+            print(f"    ask_about:        {context['ask_about']}")
+            print(f"    raw_facts ({len(context['raw_facts'])}):")
+            for fact in context["raw_facts"]:
+                print(f"      - {fact}")
+
+            if self._hud_server:
+                print(f"  [hud] publishing person_context for {person_name}")
+                self._hud_server.publish(
+                    {
+                        "type": "person_context",
+                        "name": person_name,
+                        "person_id": person_id,
+                        "context": context,
+                    }
+                )
+            else:
+                print("  [hud] broadcast disabled — not sending")
+
     def _store_interaction(self, person_id: int | None, segments: list[dict]):
         if not self._db:
             return
@@ -281,6 +312,8 @@ class LivePipelineDriver:
                 frame_idx += 1
                 frames_since_flush += 1
 
+                self._publish_retrieval_results()
+
                 if timestamp - window_start >= LIVE_BUFFER_SECONDS:
                     combined, diarization_segs = self.flush_window(
                         diarization, mic, window_start, timestamp
@@ -361,34 +394,7 @@ class LivePipelineDriver:
                 f"{seg['speaker']}: {seg['text']}"
             )
 
-        if self._retrieval_result_queue:
-            if drain_results is None:
-                raise RuntimeError(
-                    "Retrieval result queue exists but drain_results is unavailable."
-                )
-            for result in drain_results(self._retrieval_result_queue):
-                self.retrieval_results.append(result)
-                person_name, person_id, context = result
-                print(f"\n  [retrieval] {person_name}:")
-                print(f"    last_spoke:       {context['last_spoke']}")
-                print(f"    last_spoke_about: {context['last_spoke_about']}")
-                print(f"    ask_about:        {context['ask_about']}")
-                print(f"    raw_facts ({len(context['raw_facts'])}):")
-                for fact in context["raw_facts"]:
-                    print(f"      - {fact}")
-
-                if self._hud_server:
-                    print(f"  [hud] publishing person_context for {person_name}")
-                    self._hud_server.publish(
-                        {
-                            "type": "person_context",
-                            "name": person_name,
-                            "person_id": person_id,
-                            "context": context,
-                        }
-                    )
-                else:
-                    print("  [hud] broadcast disabled — not sending")
+        self._publish_retrieval_results()
 
         flag = "ON " if self.recording_buffer.flag else "OFF"
         print(

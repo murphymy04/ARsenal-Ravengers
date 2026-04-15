@@ -111,11 +111,20 @@ class RetrievalWorker:
 
         self._client: Graphiti | None = None
         self._ready = False
+        self._ready_lock = threading.Lock()
 
     def start(self):
         self._loop_thread.start()
+        threading.Thread(target=self._warmup, daemon=True).start()
         self._worker_thread.start()
         print("[retrieval] worker started")
+
+    def _warmup(self):
+        try:
+            self._ensure_client()
+            print("[retrieval] graphiti client warm")
+        except Exception as exc:
+            print(f"[retrieval] warmup failed: {exc}")
 
     def stop(self):
         self._stop.set()
@@ -165,8 +174,7 @@ class RetrievalWorker:
         facts: list[str] = []
         last_episode: EpisodicNode | None = None
         try:
-            facts = self._fetch_facts(query_name)
-            last_episode = self._fetch_last_episode(query_name)
+            facts, last_episode = self._run_async(self._fetch_all(query_name))
             return self._build_context(query_name, facts, last_episode)
         except Exception as exc:
             print(f"[retrieval] error formatting context for {query_name}: {exc}")
@@ -182,21 +190,21 @@ class RetrievalWorker:
                 "raw_facts": facts,
             }
 
-    def _fetch_facts(self, name: str) -> list[str]:
-        results = self._run_async(
-            self._client.search(f"{name} projects work interests")
-        )
-        return [r.fact for r in results]
-
-    def _fetch_last_episode(self, name: str) -> EpisodicNode | None:
-        episodes = self._run_async(
-            self._client.retrieve_episodes(datetime.now(UTC), last_n=50)
-        )
+    async def _fetch_all(self, name: str) -> tuple[list[str], EpisodicNode | None]:
+        search_coro = self._client.search(f"{name} projects work interests")
+        episodes_coro = self._client.retrieve_episodes(datetime.now(UTC), last_n=50)
+        search_results, episodes = await asyncio.gather(search_coro, episodes_coro)
+        facts = [r.fact for r in search_results]
         needle = name.lower()
-        for episode in episodes:
-            if needle in episode.name.lower() or needle in episode.content.lower():
-                return episode
-        return None
+        last_episode = next(
+            (
+                ep
+                for ep in episodes
+                if needle in ep.name.lower() or needle in ep.content.lower()
+            ),
+            None,
+        )
+        return facts, last_episode
 
     def _build_context(
         self, name: str, facts: list[str], last_episode: EpisodicNode | None
@@ -220,15 +228,16 @@ class RetrievalWorker:
         }
 
     def _ensure_client(self):
-        if self._ready:
-            return
+        with self._ready_lock:
+            if self._ready:
+                return
 
-        async def _init():
-            self._client = Graphiti(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-            await self._client.build_indices_and_constraints()
+            async def _init():
+                self._client = Graphiti(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+                await self._client.build_indices_and_constraints()
 
-        self._run_async(_init())
-        self._ready = True
+            self._run_async(_init())
+            self._ready = True
 
     def _run_async(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
