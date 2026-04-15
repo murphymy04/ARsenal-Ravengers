@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x \"C:/TAMU/Spring 2026 TAMU/CSCE 482/new/ARsenal-Ravengers/start.sh\")"
+    ]
+  }
+}
