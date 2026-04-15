@@ -40,15 +40,22 @@ class HudBroadcastServer:
 
     async def _broadcast(self, message: str):
         if not self._clients:
+            print(f"[hud] publish skipped — no connected clients ({len(message)}B)")
             return
         dead: list[ServerConnection] = []
+        delivered = 0
         for client in self._clients:
             try:
                 await client.send(message)
+                delivered += 1
             except websockets.ConnectionClosed:
                 dead.append(client)
         for client in dead:
             self._clients.discard(client)
+        print(
+            f"[hud] broadcast delivered to {delivered} client(s) "
+            f"({len(message)}B, {len(dead)} dropped)"
+        )
 
     async def _handler(self, connection: ServerConnection):
         self._clients.add(connection)

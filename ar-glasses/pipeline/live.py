@@ -378,6 +378,7 @@ class LivePipelineDriver:
                     print(f"      - {fact}")
 
                 if self._hud_server:
+                    print(f"  [hud] publishing person_context for {person_name}")
                     self._hud_server.publish(
                         {
                             "type": "person_context",
@@ -386,6 +387,14 @@ class LivePipelineDriver:
                             "context": context,
                         }
                     )
+                else:
+                    print("  [hud] broadcast disabled — not sending")
+
+        flag = "ON " if self.recording_buffer.flag else "OFF"
+        print(
+            f"===[ recording={flag} | buffered={len(self.recording_buffer.chunks)} "
+            f"chunks | quiet={self.recording_buffer.quiet_chunks} ]==="
+        )
 
         return combined, diarization_segments
 
@@ -395,7 +404,12 @@ if __name__ == "__main__":
     SIMULATION_CACHE_DIR = AR_ROOT / "data" / "simulation_cache"
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("source", nargs="?", help="video file or '--glasses'")
+    parser.add_argument("source", nargs="?", help="video file path")
+    parser.add_argument(
+        "--glasses",
+        action="store_true",
+        help="stream from AR glasses instead of webcam/video",
+    )
     parser.add_argument(
         "--boundary", type=float, default=None, help="VAD static RMS boundary"
     )
@@ -406,7 +420,7 @@ if __name__ == "__main__":
     transcription = TranscriptionPipeline()
     driver = LivePipelineDriver(identity, transcription, db)
 
-    if args.source == "--glasses":
+    if args.glasses:
         from input.glasses_adapter import GlassesServer
 
         server = GlassesServer(sample_rate=SAMPLE_RATE)
@@ -417,7 +431,7 @@ if __name__ == "__main__":
                 mic=mic,
                 clock_fn=clock_fn,
                 fps=CAMERA_FPS,
-                vision_stride=VISION_STRIDE,
+                vision_stride=1,
                 static_boundary=args.boundary,
             )
         finally:

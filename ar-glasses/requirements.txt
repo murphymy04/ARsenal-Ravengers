@@ -16,9 +16,10 @@ librosa
 sounddevice
 silero-vad
 
-# Transcription (Groq Whisper API)
+# Transcription (Groq Whisper API + whisperx wav2vec2 alignment)
 groq
 python-dotenv
+whisperx
 
 # Knowledge graph
 graphiti-core

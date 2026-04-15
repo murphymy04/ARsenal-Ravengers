@@ -133,12 +133,24 @@ class RetrievalWorker:
                 continue
 
             if not match.is_known or match.name.startswith("Person "):
+                print(
+                    f"[retrieval] skip track={track_id} name={match.name!r} "
+                    f"(unlabeled or auto-cluster)"
+                )
                 continue
 
             if not self._should_retrieve(match.name, timestamp):
+                print(f"[retrieval] skip {match.name} (cooldown)")
                 continue
 
+            print(f"[retrieval] FIRING for {match.name} (track={track_id})")
             context = self._retrieve(match.name)
+            print(
+                f"[retrieval] SENT {match.name} -> queue | "
+                f"last_spoke={context.get('last_spoke')!r} "
+                f"ask_about={context.get('ask_about')!r} "
+                f"facts={len(context.get('raw_facts') or [])}"
+            )
             self._result_queue.put_nowait((match.name, match.person_id, context))
 
     def _should_retrieve(self, name: str, timestamp: float) -> bool:

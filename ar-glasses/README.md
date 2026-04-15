@@ -170,6 +170,17 @@ python3 main.py --mode enroll
 
 Next time you run `main.py`, enrolled people will be recognized automatically.
 
+### Full Pipeline (retrieval + storage + HUD broadcast)
+
+```bash
+HUD_BROADCAST_ENABLED=true RETRIEVAL_ENABLED=True SAVE_TO_MEMORY=true \
+    python pipeline/live.py test_videos/your_clip.mp4
+```
+
+- `RETRIEVAL_ENABLED` — queries Zep/Graphiti for context on recognized people
+- `SAVE_TO_MEMORY` — flushes labeled conversations to the knowledge graph
+- `HUD_BROADCAST_ENABLED` — exposes a WebSocket at `ws://0.0.0.0:8765` for the Unity glasses app (override with `HUD_BROADCAST_HOST` / `HUD_BROADCAST_PORT`)
+
 ## Testing
 
 All test commands should be run from inside `ar-glasses/` with the venv active.

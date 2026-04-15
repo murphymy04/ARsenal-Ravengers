@@ -49,6 +49,9 @@ from flask_socketio import SocketIO
 
 from config import (
     CAMERA_FPS,
+    HUD_BROADCAST_ENABLED,
+    HUD_BROADCAST_HOST,
+    HUD_BROADCAST_PORT,
     LIVE_BUFFER_SECONDS,
     RETRIEVAL_COOLDOWN_SECONDS,
     RETRIEVAL_ENABLED,
@@ -75,6 +78,16 @@ try:
     from pipeline.retrieval import RetrievalWorker
 except ImportError:
     RetrievalWorker = None
+
+try:
+    from pipeline.hud_broadcast import HudBroadcastServer
+except ImportError:
+    HudBroadcastServer = None
+
+try:
+    from pipeline.knowledge import flush_memory
+except ImportError:
+    flush_memory = None
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -243,6 +256,16 @@ def process_video(
     transcription = TranscriptionPipeline()
     driver = LivePipelineDriver(identity, transcription, db)
 
+    hud_server = None
+    if HUD_BROADCAST_ENABLED:
+        if HudBroadcastServer is None:
+            raise RuntimeError(
+                "HUD broadcast enabled but pipeline.hud_broadcast is unavailable."
+            )
+        hud_server = HudBroadcastServer(HUD_BROADCAST_HOST, HUD_BROADCAST_PORT)
+        hud_server.start()
+        driver._hud_server = hud_server
+
     track_event_queue = None
     retrieval_worker = None
     if RETRIEVAL_ENABLED and RetrievalWorker is not None:
@@ -329,8 +352,17 @@ def process_video(
                 state.captions.extend(combined)
                 state.retrieval.extend(new_retrieval)
     finally:
+        remaining = driver.recording_buffer.drain()
+        if remaining:
+            driver._sanitize_and_flush(remaining)
+        if driver.save_to_memory and flush_memory:
+            print("[knowledge] waiting for pending saves...")
+            flush_memory()
+            print("[knowledge] done.")
         if retrieval_worker:
             retrieval_worker.stop()
+        if hud_server:
+            hud_server.stop()
         diarization.close()
         camera.close()
         if glasses_server:
