@@ -89,7 +89,7 @@ class VadSpeaker:
 
         self._speaking: dict[int, bool] = {}
 
-        self._static_boundary = 0.07
+        self._static_boundary = 0.1
         self._adaptive_state = create_adaptive_rms_state()
         self._adaptive_boundary = self._adaptive_state.boundary
         self._smoothed_rms_excess = 0.0

@@ -36,6 +36,7 @@ from input.glasses_net import (
 
 REANCHOR_THRESHOLD_SEC = 1.0
 STATS_INTERVAL_SEC = 2.0
+AUDIO_WAIT_TIMEOUT_SEC = 0.5
 
 
 def slice_audio_by_timestamp(
@@ -89,6 +90,11 @@ class PairingLoop:
         self._last_paired_ts: Optional[int] = None
         self._first_ts: Optional[int] = None
 
+        self._pairs_emitted = 0
+        self._pairs_dropped_audio_stall = 0
+        self._last_stats_snapshot: dict = {}
+        self._last_stats_at: Optional[float] = None
+
     def start(self):
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -140,15 +146,30 @@ class PairingLoop:
             now = time.monotonic()
             if now - last_stats_at >= STATS_INTERVAL_SEC:
                 last_stats_at = now
-                self._log_stats()
+                # self._log_stats()
 
             frame = self._video_rx.get_frame_after(self._last_paired_seq)
             if frame is None:
                 time.sleep(GLASSES_SPIN_INTERVAL_SEC)
                 continue
 
-            if not self._wait_for_audio(frame.timestamp):
-                return
+            if not self._wait_for_audio(frame.timestamp, AUDIO_WAIT_TIMEOUT_SEC):
+                if not self._running or self._reset_event.is_set():
+                    return
+                # a_age = self._audio_rx.seconds_since_last_packet()
+                # a_latest = self._audio_rx.get_latest_audio_timestamp()
+                # gap = f"{frame.timestamp - a_latest}" if a_latest else "n/a"
+                # age = f"{a_age:.2f}s ago" if a_age is not None else "never"
+                # print(
+                #     f"[Pairing] audio stalled >{AUDIO_WAIT_TIMEOUT_SEC:.1f}s — "
+                #     f"dropping frame seq={frame.seq} | "
+                #     f"wanted_ts={frame.timestamp} latest_audio_ts={a_latest} "
+                #     f"gap_ms={gap} last_audio_recv={age}"
+                # )
+                self._pairs_dropped_audio_stall += 1
+                self._last_paired_seq = frame.seq
+                self._last_paired_ts = frame.timestamp
+                continue
 
             chunks = self._audio_rx.get_audio_range(
                 self._last_paired_ts, frame.timestamp
@@ -172,6 +193,7 @@ class PairingLoop:
                 print("[Pairing] emission re-anchored (fell >1s behind)")
 
             self._put_pair((bgr, audio, ts_seconds))
+            self._pairs_emitted += 1
             self._last_paired_seq = frame.seq
             self._last_paired_ts = frame.timestamp
 
@@ -183,11 +205,16 @@ class PairingLoop:
             time.sleep(GLASSES_SPIN_INTERVAL_SEC)
         return None
 
-    def _wait_for_audio(self, target_ts: int) -> bool:
+    def _wait_for_audio(
+        self, target_ts: int, timeout_sec: Optional[float] = None
+    ) -> bool:
+        deadline = time.monotonic() + timeout_sec if timeout_sec is not None else None
         while self._running and not self._reset_event.is_set():
             latest = self._audio_rx.get_latest_audio_timestamp()
             if latest is not None and latest >= target_ts:
                 return True
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
             time.sleep(GLASSES_SPIN_INTERVAL_SEC)
         return False
 
@@ -211,15 +238,60 @@ class PairingLoop:
                 return
 
     def _log_stats(self):
-        latest_audio_ts = self._audio_rx.get_latest_audio_timestamp()
-        print(
-            f"[Pairing] stats: "
-            f"v_recv={self._video_rx.frames_received} "
-            f"v_drop={self._video_rx.frames_dropped} | "
-            f"a_recv={self._audio_rx.chunks_received} "
-            f"a_ts={latest_audio_ts} | "
-            f"pair_q={self.pairs.qsize()}"
+        now = time.monotonic()
+        snap = {
+            "v_pkts": self._video_rx.packets_received,
+            "v_bytes": self._video_rx.packets_bytes,
+            "v_frames": self._video_rx.frames_received,
+            "a_bytes": self._audio_rx.bytes_received,
+            "a_chunks": self._audio_rx.chunks_received,
+            "pairs": self._pairs_emitted,
+        }
+        prev = self._last_stats_snapshot
+        elapsed = (
+            (now - self._last_stats_at)
+            if self._last_stats_at is not None
+            else STATS_INTERVAL_SEC
         )
+
+        def rate(key: str) -> float:
+            if not prev:
+                return 0.0
+            return (snap[key] - prev.get(key, 0)) / elapsed
+
+        v_age = self._video_rx.seconds_since_last_packet()
+        a_age = self._audio_rx.seconds_since_last_packet()
+        v_age_str = f"{v_age:.2f}s" if v_age is not None else "never"
+        a_age_str = f"{a_age:.2f}s" if a_age is not None else "never"
+        print(
+            f"[Pairing] stats | "
+            f"video pkts={snap['v_pkts']} ({rate('v_pkts'):.0f}/s) "
+            f"bytes={snap['v_bytes'] / 1024:.0f}KB ({rate('v_bytes') / 1024:.0f}KB/s) "
+            f"frames={snap['v_frames']} ({rate('v_frames'):.1f}/s) "
+            f"drop={self._video_rx.frames_dropped} "
+            f"frag_pending={self._video_rx.pending_fragments()} "
+            f"frag_gc={self._video_rx.fragments_gc} "
+            f"last_pkt={v_age_str}"
+        )
+        print(
+            f"[Pairing] stats | "
+            f"audio bytes={snap['a_bytes'] / 1024:.0f}KB "
+            f"({rate('a_bytes') / 1024:.0f}KB/s) "
+            f"chunks={snap['a_chunks']} ({rate('a_chunks'):.1f}/s) "
+            f"accepts={self._audio_rx.accepts} "
+            f"idle_bailouts={self._audio_rx.recv_idle_bailouts} "
+            f"last_ts={self._audio_rx.get_latest_audio_timestamp()} "
+            f"last_pkt={a_age_str}"
+        )
+        print(
+            f"[Pairing] stats | "
+            f"pairs_emit={snap['pairs']} ({rate('pairs'):.1f}/s) "
+            f"dropped_audio_stall={self._pairs_dropped_audio_stall} "
+            f"pair_q={self.pairs.qsize()}/{self.pairs.maxsize}"
+        )
+
+        self._last_stats_snapshot = snap
+        self._last_stats_at = now
 
 
 class GlassesMic:

@@ -330,6 +330,12 @@ def process_video(
                 state.video_time = timestamp
                 state.effective_rate = effective_rate
 
+            driver._publish_retrieval_results()
+            new_retrieval, retrieval_seen = drain_new_retrieval(driver, retrieval_seen)
+            if new_retrieval:
+                with state.lock:
+                    state.retrieval.extend(new_retrieval)
+
             if timestamp - window_start >= LIVE_BUFFER_SECONDS:
                 combined, _ = driver.flush_window(
                     diarization, mic, window_start, timestamp

@@ -24,7 +24,9 @@ DISCOVERY_PORT = 5002
 VIDEO_PORT = 5000
 COMMAND_PORT = 5001
 
-VIDEO_SILENCE_TIMEOUT_SEC = 2.0
+VIDEO_SILENCE_TIMEOUT_SEC = 30.0
+AUDIO_RECV_IDLE_TIMEOUT_SEC = 30.0
+AUDIO_ACCEPT_HEARTBEAT_SEC = 5.0
 
 
 @dataclass
@@ -123,6 +125,11 @@ class AudioReceiver:
         self._chunks_lock = threading.Lock()
 
         self.chunks_received = 0
+        self.bytes_received = 0
+        self.accepts = 0
+        self.recv_idle_bailouts = 0
+        self._last_packet_at: Optional[float] = None
+        self._last_client_closed_at: Optional[float] = None
         self.on_reconnect_callback: Optional[Callable[[], None]] = None
 
     def start(self):
@@ -142,6 +149,13 @@ class AudioReceiver:
         with self._chunks_lock:
             self._chunks.clear()
         self.chunks_received = 0
+        self.bytes_received = 0
+        self._last_packet_at = None
+
+    def seconds_since_last_packet(self) -> Optional[float]:
+        if self._last_packet_at is None:
+            return None
+        return time.monotonic() - self._last_packet_at
 
     def get_audio_range(self, ts_start: int, ts_end: int) -> list[AudioChunk]:
         with self._chunks_lock:
@@ -158,17 +172,40 @@ class AudioReceiver:
             return self._chunks[-1].timestamp_end
 
     def _accept_loop(self):
+        last_heartbeat = time.monotonic()
         while self.running:
             try:
                 client, addr = self.sock.accept()
             except socket.timeout:
+                # now = time.monotonic()
+                # if now - last_heartbeat >= AUDIO_ACCEPT_HEARTBEAT_SEC:
+                #     gap = (
+                #         f"{now - self._last_client_closed_at:.1f}s"
+                #         if self._last_client_closed_at is not None
+                #         else "never"
+                #     )
+                #     print(
+                #         f"[Audio] accept() waiting... accepts={self.accepts} "
+                #         f"since_last_close={gap} client_socket_bound="
+                #         f"{self.client_socket is not None}"
+                #     )
+                #     last_heartbeat = now
                 continue
             except Exception as e:
                 if self.running:
                     print(f"[Audio] Accept error: {e}")
                 continue
 
-            print(f"[Audio] Glasses connected from {addr}")
+            self.accepts += 1
+            since_close = (
+                f"{time.monotonic() - self._last_client_closed_at:.2f}s"
+                if self._last_client_closed_at is not None
+                else "first"
+            )
+            print(
+                f"[Audio] accept #{self.accepts} from {addr} "
+                f"(since_last_close={since_close})"
+            )
             self._enable_keepalive(client)
             client.settimeout(1.0)
             self.client_socket = client
@@ -179,6 +216,8 @@ class AudioReceiver:
 
             self._receive_loop()
             self._close_client()
+            self._last_client_closed_at = time.monotonic()
+            last_heartbeat = time.monotonic()
 
     @staticmethod
     def _enable_keepalive(sock: socket.socket):
@@ -201,6 +240,12 @@ class AudioReceiver:
             self.client_socket = None
 
     def _receive_loop(self):
+        start = time.monotonic()
+        packets_this_session = 0
+        print(
+            f"[Audio] entering receive loop "
+            f"(accept #{self.accepts}, thread={threading.current_thread().name})"
+        )
         while self.running:
             try:
                 length_bytes = self._recv_exact(4)
@@ -216,6 +261,12 @@ class AudioReceiver:
                 if not packet:
                     break
 
+                packets_this_session += 1
+                # if packets_this_session <= 3:
+                #     print(
+                #         f"[Audio] rx packet #{packets_this_session} "
+                #         f"len={length} total_bytes={self.bytes_received}"
+                #     )
                 self._handle_packet(packet)
             except socket.timeout:
                 continue
@@ -224,18 +275,44 @@ class AudioReceiver:
                     print(f"[Audio] Receive error: {e}")
                 break
 
-        print("[Audio] Glasses disconnected")
+        elapsed = time.monotonic() - start
+        print(
+            f"[Audio] exiting receive loop — {packets_this_session} packets "
+            f"in {elapsed:.1f}s (idle_bailouts_total={self.recv_idle_bailouts})"
+        )
 
     def _recv_exact(self, n: int) -> Optional[bytes]:
         data = b""
+        idle_deadline = time.monotonic() + AUDIO_RECV_IDLE_TIMEOUT_SEC
+        timeouts = 0
         while len(data) < n:
             try:
                 chunk = self.client_socket.recv(n - len(data))
                 if not chunk:
+                    print(
+                        f"[Audio] recv EOF — peer closed after {len(data)}/{n} bytes "
+                        f"(total_rx={self.bytes_received})"
+                    )
                     return None
                 data += chunk
+                self.bytes_received += len(chunk)
+                self._last_packet_at = time.monotonic()
+                idle_deadline = time.monotonic() + AUDIO_RECV_IDLE_TIMEOUT_SEC
             except socket.timeout:
+                timeouts += 1
                 if not self.running:
+                    return None
+                if time.monotonic() > idle_deadline:
+                    self.recv_idle_bailouts += 1
+                    print(
+                        f"[Audio] recv idle >{AUDIO_RECV_IDLE_TIMEOUT_SEC:.1f}s — "
+                        f"forcing reconnect ({timeouts} timeouts, "
+                        f"got {len(data)}/{n} bytes, total_rx={self.bytes_received})"
+                    )
+                    try:
+                        self.client_socket.shutdown(socket.SHUT_RDWR)
+                    except Exception:
+                        pass
                     return None
                 continue
         return data
@@ -278,7 +355,7 @@ class VideoReceiver:
     def __init__(self, max_frames: int = 120):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
         self.sock.bind(("0.0.0.0", VIDEO_PORT))
         self.sock.settimeout(1.0)
 
@@ -293,6 +370,11 @@ class VideoReceiver:
         self.frames_received = 0
         self.frames_dropped = 0
         self.last_seq = -1
+
+        self.packets_received = 0
+        self.packets_bytes = 0
+        self.packets_too_small = 0
+        self.fragments_gc = 0
 
         self._last_packet_at: Optional[float] = None
         self._silent = True
@@ -318,8 +400,21 @@ class VideoReceiver:
             self.frames_received = 0
             self.frames_dropped = 0
             self.last_seq = -1
+            self.packets_received = 0
+            self.packets_bytes = 0
+            self.packets_too_small = 0
+            self.fragments_gc = 0
         self._last_packet_at = None
         self._silent = True
+
+    def pending_fragments(self) -> int:
+        with self._state_lock:
+            return len(self._fragments)
+
+    def seconds_since_last_packet(self) -> Optional[float]:
+        if self._last_packet_at is None:
+            return None
+        return time.monotonic() - self._last_packet_at
 
     def get_frame_after(self, seq: int) -> Optional[FrameData]:
         with self._state_lock:
@@ -332,6 +427,8 @@ class VideoReceiver:
         while self.running:
             try:
                 data, _ = self.sock.recvfrom(65535)
+                self.packets_received += 1
+                self.packets_bytes += len(data)
                 self._last_packet_at = time.monotonic()
                 if self._silent:
                     self._silent = False
@@ -357,6 +454,7 @@ class VideoReceiver:
 
     def _handle_packet(self, data: bytes):
         if len(data) < self.HEADER_SIZE:
+            self.packets_too_small += 1
             return
 
         seq = struct.unpack("<I", data[0:4])[0]
@@ -390,6 +488,7 @@ class VideoReceiver:
                 for stale_seq in stale_seqs:
                     del self._fragments[stale_seq]
                     del self._fragment_info[stale_seq]
+                    self.fragments_gc += 1
 
         if completed is not None:
             self._complete_frame(*completed)
