@@ -22,6 +22,7 @@ import cv2
 import numpy as np
 
 from config import (
+    GLASSES_DROP_LAG_SECONDS,
     GLASSES_MAX_STAGING_SECONDS,
     GLASSES_PAIR_QUEUE_MAX,
     GLASSES_PREBUFFER_SECONDS,
@@ -148,14 +149,15 @@ class PairingLoop:
             if not self._wait_for_audio(frame.timestamp):
                 return
 
-            chunks = self._audio_rx.get_audio_range(
-                self._last_paired_ts, frame.timestamp
-            )
-            audio = slice_audio_by_timestamp(
-                chunks, self._last_paired_ts, frame.timestamp
-            )
+            last_ts = self._last_paired_ts
+            first_ts = self._first_ts
+            if last_ts is None or first_ts is None:
+                continue
+
+            chunks = self._audio_rx.get_audio_range(last_ts, frame.timestamp)
+            audio = slice_audio_by_timestamp(chunks, last_ts, frame.timestamp)
             bgr = cv2.cvtColor(frame.data, cv2.COLOR_GRAY2BGR)
-            ts_seconds = (frame.timestamp - self._first_ts) / 1000.0
+            ts_seconds = (frame.timestamp - first_ts) / 1000.0
 
             if not self._logged_first:
                 self._logged_first = True
@@ -184,6 +186,7 @@ class PairingLoop:
 
             emit_wall_start = time.perf_counter()
             emit_ts_start: Optional[float] = None
+            carry_audio = np.zeros(0, dtype=np.float32)
             print(
                 f"[Pairing] prebuffer filled ({GLASSES_PREBUFFER_SECONDS:.1f}s), "
                 f"starting paced emission"
@@ -205,13 +208,23 @@ class PairingLoop:
                     emit_ts_start = ts_seconds
 
                 target_wall = emit_wall_start + (ts_seconds - emit_ts_start)
-                now = time.perf_counter()
-                if now < target_wall:
-                    time.sleep(target_wall - now)
-                elif now - target_wall > 1.0:
+                lag = time.perf_counter() - target_wall
+
+                if lag < 0:
+                    time.sleep(-lag)
+                elif lag > 1.0:
                     emit_wall_start = time.perf_counter()
                     emit_ts_start = ts_seconds
                     print("[Pairing] emission re-anchored (fell >1s behind)")
+                elif lag > GLASSES_DROP_LAG_SECONDS:
+                    _, dropped_audio, _ = pair
+                    carry_audio = np.concatenate([carry_audio, dropped_audio])
+                    continue
+
+                if carry_audio.size:
+                    bgr, audio, ts = pair
+                    pair = (bgr, np.concatenate([carry_audio, audio]), ts)
+                    carry_audio = np.zeros(0, dtype=np.float32)
 
                 self._put_pair(pair)
 
@@ -341,7 +354,8 @@ class GlassesServer:
         self.mic = GlassesMic(sample_rate)
         self.camera = GlassesCamera(self.pairing, self.mic)
 
-        self.audio_rx.on_connect_callback = self._on_reconnect
+        self._audio_connected_once = False
+        self.audio_rx.on_connect_callback = self._on_audio_connect
 
     def start(self) -> tuple[GlassesCamera, GlassesMic, Callable[[int], float]]:
         self.discovery = DiscoveryService(
@@ -365,6 +379,10 @@ class GlassesServer:
         if self.discovery:
             self.discovery.stop()
 
-    def _on_reconnect(self):
-        print("[GlassesServer] Audio reconnect — resetting pairing loop")
+    def _on_audio_connect(self):
+        if not self._audio_connected_once:
+            self._audio_connected_once = True
+            print("[GlassesServer] audio connected")
+            return
+        print("[GlassesServer] audio reconnected — resetting pairing loop")
         self.pairing.reset()
