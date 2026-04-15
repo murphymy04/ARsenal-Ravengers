@@ -8,11 +8,11 @@
 #   4. Dashboard      — ar-glasses/dashboard.py    (Flask  :5050)  [foreground]
 #
 # Usage:
-#   ./start.sh [--skip-neo4j] [--skip-knowledge] [--skip-api] [-- <dashboard args>]
+#   ./run.sh [--debug] [--skip-neo4j] [--skip-knowledge] [--skip-api] [-- <dashboard args>]
 #
-# By default runs: HUD_BROADCAST_ENABLED=true RETRIEVAL_ENABLED=true SAVE_TO_MEMORY=true
-#                  python dashboard.py --glasses
-# Any args after -- are forwarded to dashboard.py instead of the default --glasses.
+# --debug              Show live logs from all background services with [prefix] labels.
+#                      Without this flag, background service output is suppressed.
+# Any args after --    Forwarded to dashboard.py instead of the default --glasses.
 
 set -uo pipefail
 
@@ -22,6 +22,7 @@ KNOWLEDGE_DIR="$SCRIPT_DIR/knowledge"
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
 
+DEBUG=false
 SKIP_NEO4J=false
 SKIP_KNOWLEDGE=false
 SKIP_API=false
@@ -33,6 +34,8 @@ for arg in "$@"; do
     DASHBOARD_ARGS+=("$arg")
   elif [[ "$arg" == "--" ]]; then
     PARSING_DASHBOARD_ARGS=true
+  elif [[ "$arg" == "--debug" ]]; then
+    DEBUG=true
   elif [[ "$arg" == "--skip-neo4j" ]]; then
     SKIP_NEO4J=true
   elif [[ "$arg" == "--skip-knowledge" ]]; then
@@ -41,7 +44,7 @@ for arg in "$@"; do
     SKIP_API=true
   else
     echo "Unknown flag: $arg" >&2
-    echo "Usage: $0 [--skip-neo4j] [--skip-knowledge] [--skip-api] [-- <dashboard args>]" >&2
+    echo "Usage: $0 [--debug] [--skip-neo4j] [--skip-knowledge] [--skip-api] [-- <dashboard args>]" >&2
     exit 1
   fi
 done
@@ -64,14 +67,34 @@ fi
 
 PIDS=()
 
+# Kill any process listening on a given port using netstat + taskkill (Windows-safe)
+kill_port() {
+  local port="$1"
+  if ! (echo > /dev/tcp/localhost/"$port") 2>/dev/null; then
+    return 0
+  fi
+  python -c "
+import subprocess
+port = '$port'
+r = subprocess.run(['netstat', '-ano'], capture_output=True, text=True)
+for line in r.stdout.splitlines():
+    parts = line.split()
+    if len(parts) >= 5 and parts[3] == 'LISTENING' and parts[1].endswith(':' + port) and parts[4].isdigit():
+        subprocess.run(['taskkill', '/F', '/PID', parts[4]], capture_output=True)
+" 2>/dev/null || true
+}
+
 cleanup() {
   echo ""
-  echo "Shutting down background services..."
+  echo "Shutting down..."
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
-  # Wait briefly so processes can flush
-  sleep 1
+  # Kill by port to catch any child processes that outlive their subshell
+  kill_port 8765  # HUD WebSocket broadcast
+  kill_port 5050  # Flask dashboard
+  kill_port 5000  # People API
+  kill_port 8000  # Knowledge API
   if ! $SKIP_NEO4J; then
     echo "Stopping Neo4j..."
     docker compose -f "$KNOWLEDGE_DIR/docker-compose.yml" down
@@ -105,18 +128,7 @@ free_port() {
     return 0  # already free
   fi
   echo "Port $port already in use — killing existing process..."
-  # Use Python + taskkill: reliable on Windows regardless of shell environment
-  python -c "
-import subprocess, sys
-port = '$port'
-r = subprocess.run(['netstat', '-ano'], capture_output=True, text=True)
-for line in r.stdout.splitlines():
-    parts = line.split()
-    if len(parts) >= 5 and parts[3] == 'LISTENING' and parts[1].endswith(':' + port) and parts[4].isdigit():
-        subprocess.run(['taskkill', '/F', '/PID', parts[4]], capture_output=True)
-        print('Killed PID', parts[4], 'on :' + port)
-" 2>/dev/null || true
-  # Poll until the port is actually released
+  kill_port "$port"
   for _ in $(seq 1 15); do
     sleep 1
     if ! (echo > /dev/tcp/localhost/"$port") 2>/dev/null; then
@@ -126,11 +138,25 @@ for line in r.stdout.splitlines():
   echo "Warning: port $port may not have been released" >&2
 }
 
+# Route a background service's output: prefixed to terminal in debug mode, silent otherwise
+service_output() {
+  local prefix="$1"
+  if $DEBUG; then
+    sed "s/^/[$prefix] /"
+  else
+    cat > /dev/null
+  fi
+}
+
 # ── 1. Neo4j ──────────────────────────────────────────────────────────────────
 
 if ! $SKIP_NEO4J; then
   echo "Starting Neo4j..."
-  docker compose -f "$KNOWLEDGE_DIR/docker-compose.yml" up -d
+  if $DEBUG; then
+    docker compose -f "$KNOWLEDGE_DIR/docker-compose.yml" up -d
+  else
+    docker compose -f "$KNOWLEDGE_DIR/docker-compose.yml" up -d --quiet-pull 2>/dev/null
+  fi
   echo -n "Waiting for Neo4j (:7474)"
   for _ in $(seq 1 60); do
     if curl -sf http://localhost:7474/ > /dev/null 2>&1; then
@@ -148,7 +174,7 @@ if ! $SKIP_KNOWLEDGE; then
   free_port 8000
   echo "Starting knowledge API..."
   (cd "$KNOWLEDGE_DIR" && uv run uvicorn main:app --host 0.0.0.0 --port 8000 2>&1 \
-    | sed 's/^/[knowledge] /') &
+    | service_output "knowledge") &
   PIDS+=($!)
   wait_for_port "knowledge API" 8000 20
 fi
@@ -159,7 +185,7 @@ if ! $SKIP_API; then
   free_port 5000
   echo "Starting people API..."
   (cd "$AR_GLASSES_DIR" && python -m api.api 2>&1 \
-    | sed 's/^/[api] /') &
+    | service_output "api") &
   PIDS+=($!)
   wait_for_port "people API" 5000 20
 fi
@@ -172,6 +198,7 @@ free_port 8765   # HUD WebSocket broadcast (HUD_BROADCAST_PORT default)
 echo ""
 echo "Starting dashboard (http://localhost:5050)..."
 echo "  Args: ${DASHBOARD_ARGS[*]}"
+$DEBUG && echo "  Debug mode: background service logs enabled"
 echo ""
 
 cd "$AR_GLASSES_DIR"
