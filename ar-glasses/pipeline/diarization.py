@@ -17,7 +17,6 @@ _AR_ROOT = Path(__file__).resolve().parent.parent
 if str(_AR_ROOT) not in sys.path:
     sys.path.insert(0, str(_AR_ROOT))
 
-from config import SPEAKING_BACKEND
 from models import IdentityModule
 from pipeline.identity import NullIdentity
 from pipeline.segments import merge_close_segments
@@ -26,6 +25,8 @@ from processing.face_tracker import FaceTracker
 from processing.speaking_detector import SpeakingDetector
 from processing.vad_speaker import VadSpeaker
 from storage.speaking_log import SpeakingLog
+
+from config import RETRIEVAL_MIN_TRACK_FRAMES, SPEAKING_BACKEND
 
 
 def _create_speaker(fps: float, static_boundary: float | None = None):
@@ -51,6 +52,7 @@ class DiarizationPipeline:
         self._last_faces: list = []
         self._last_smoothed: list = []
         self._last_track_ids: list = []
+        self._pending_retrieval: dict[int, int] = {}  # track_id -> frames_seen
 
     def open(self, fps: float):
         self._detector = FaceDetector()
@@ -78,9 +80,28 @@ class DiarizationPipeline:
                 faces, raw_matches, frame_idx
             )
 
-            if self._track_event_queue and new_track_ids:
-                for match, tid in zip(smoothed, track_ids, strict=False):
-                    if tid in new_track_ids and match.is_known:
+            if self._track_event_queue:
+                for tid in new_track_ids:
+                    self._pending_retrieval[tid] = 0
+
+                active_set = set(track_ids)
+                self._pending_retrieval = {
+                    tid: n
+                    for tid, n in self._pending_retrieval.items()
+                    if tid in active_set
+                }
+                for tid in list(self._pending_retrieval):
+                    self._pending_retrieval[tid] += 1
+                    if self._pending_retrieval[tid] < RETRIEVAL_MIN_TRACK_FRAMES:
+                        continue
+                    idx = track_ids.index(tid)
+                    match = smoothed[idx]
+                    del self._pending_retrieval[tid]
+                    if match.is_known:
+                        print(
+                            f"[retrieval] QUEUED {match.name} "
+                            f"(track={tid}, t={timestamp:.1f}s)"
+                        )
                         self._track_event_queue.put_nowait((tid, match, timestamp))
 
             for face, tid in zip(faces, track_ids, strict=False):

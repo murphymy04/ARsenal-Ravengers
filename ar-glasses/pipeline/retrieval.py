@@ -163,8 +163,8 @@ class RetrievalWorker:
             self._result_queue.put_nowait((match.name, match.person_id, context))
 
     def _should_retrieve(self, name: str, timestamp: float) -> bool:
-        last = self._last_retrieval.get(name, 0)
-        if timestamp - last < self._cooldown_seconds:
+        last = self._last_retrieval.get(name)
+        if last is not None and timestamp - last < self._cooldown_seconds:
             return False
         self._last_retrieval[name] = timestamp
         return True

@@ -178,14 +178,14 @@ class LivePipelineDriver:
 
             if self._hud_server:
                 print(f"  [hud] publishing person_context for {person_name}")
-                self._hud_server.publish(
-                    {
+                hud_context =  {
                         "type": "person_context",
                         "name": person_name,
                         "person_id": person_id,
                         "context": context,
                     }
-                )
+                print(hud_context)
+                self._hud_server.publish(hud_context)
             else:
                 print("  [hud] broadcast disabled — not sending")
 
