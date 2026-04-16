@@ -12,7 +12,10 @@ with automatic pending-cluster promotion.
 
 import cv2
 import numpy as np
+from models import DetectedFace, FaceEmbedding, IdentityMatch
+
 from config import (
+    AUTO_ENROLL_ENABLED,
     EMBEDDING_DIVERSITY_THRESHOLD,
     EMBEDDING_UPDATE_INTERVAL,
     FACE_BLUR_THRESHOLD,
@@ -21,7 +24,6 @@ from config import (
     PENDING_CLUSTER_SIMILARITY,
     PENDING_EXPIRY_FRAMES,
 )
-from models import DetectedFace, FaceEmbedding, IdentityMatch
 
 
 class NullIdentity:
@@ -54,8 +56,18 @@ class FullIdentity:
         match = self._matcher.match(embedding)
 
         if match.is_known:
-            self._maybe_store_embedding(match.person_id, embedding, face, frame_count)
+            if AUTO_ENROLL_ENABLED:
+                self._maybe_store_embedding(
+                    match.person_id, embedding, face, frame_count
+                )
+            else:
+                self._db.update_last_seen(match.person_id)
             return match
+
+        if not AUTO_ENROLL_ENABLED:
+            return IdentityMatch(
+                person_id=None, name="Unknown", confidence=0.0, is_known=False
+            )
 
         match, promoted = self._update_pending(embedding, face, frame_count)
         if promoted:
