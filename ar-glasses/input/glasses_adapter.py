@@ -27,6 +27,8 @@ from config import (
     GLASSES_PAIR_QUEUE_MAX,
     GLASSES_PREBUFFER_SECONDS,
     GLASSES_SPIN_INTERVAL_SEC,
+    TRAINING_DATA,
+    TRAINING_DATA_DIR,
 )
 from input.glasses_net import (
     AudioChunk,
@@ -34,6 +36,7 @@ from input.glasses_net import (
     DiscoveryService,
     VideoReceiver,
 )
+from input.training_recorder import TrainingRecorder
 
 
 def slice_audio_by_timestamp(
@@ -75,10 +78,12 @@ class PairingLoop:
         video_rx: VideoReceiver,
         audio_rx: AudioReceiver,
         max_pairs: int = GLASSES_PAIR_QUEUE_MAX,
+        on_emit: Optional[Callable[[tuple], None]] = None,
     ):
         self._video_rx = video_rx
         self._audio_rx = audio_rx
         self.pairs: queue.Queue = queue.Queue(maxsize=max_pairs)
+        self.on_emit = on_emit
 
         self._staging: deque = deque()
         self._staging_lock = threading.Lock()
@@ -244,6 +249,8 @@ class PairingLoop:
         return False
 
     def _put_pair(self, pair):
+        if self.on_emit is not None:
+            self.on_emit(pair)
         try:
             self.pairs.put_nowait(pair)
             return
@@ -350,7 +357,14 @@ class GlassesServer:
         self.discovery: Optional[DiscoveryService] = None
         self.audio_rx = AudioReceiver()
         self.video_rx = VideoReceiver()
-        self.pairing = PairingLoop(self.video_rx, self.audio_rx)
+        self.recorder: Optional[TrainingRecorder] = (
+            TrainingRecorder(TRAINING_DATA_DIR, sample_rate) if TRAINING_DATA else None
+        )
+        self.pairing = PairingLoop(
+            self.video_rx,
+            self.audio_rx,
+            on_emit=self.recorder.write if self.recorder else None,
+        )
         self.mic = GlassesMic(sample_rate)
         self.camera = GlassesCamera(self.pairing, self.mic)
 
@@ -378,8 +392,12 @@ class GlassesServer:
         self.audio_rx.stop()
         if self.discovery:
             self.discovery.stop()
+        if self.recorder:
+            self.recorder.close()
 
     def _on_audio_connect(self):
+        if self.recorder:
+            self.recorder.start_session()
         if not self._audio_connected_once:
             self._audio_connected_once = True
             print("[GlassesServer] audio connected")
