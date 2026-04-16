@@ -11,6 +11,7 @@ CommandServer (handled via a separate websocket), LaptopServer.
 import json
 import socket
 import struct
+import subprocess
 import threading
 import time
 from collections import deque
@@ -25,6 +26,23 @@ AUDIO_PORT = 5003
 DISCOVERY_PORT = 5002
 VIDEO_PORT = 5000
 COMMAND_PORT = 5001
+
+
+def _list_local_ipv4() -> list[str]:
+    try:
+        out = subprocess.check_output(
+            ["ifconfig"], stderr=subprocess.DEVNULL, text=True
+        )
+    except Exception:
+        return []
+    ips = []
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("inet ") and "127.0.0.1" not in line:
+            parts = line.split()
+            if len(parts) >= 2:
+                ips.append(parts[1])
+    return ips
 
 
 @dataclass
@@ -71,7 +89,13 @@ class DiscoveryService:
         self.running = True
         self.thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.thread.start()
+        local_ips = _list_local_ipv4()
         print(f"[Discovery] Listening for glasses on port {DISCOVERY_PORT}")
+        print(f"[Discovery] Local IPv4 addresses: {local_ips or 'none detected'}")
+        print(
+            "[Discovery] Glasses must be able to reach one of these IPs on "
+            f"UDP/{VIDEO_PORT} and TCP/{AUDIO_PORT}"
+        )
 
     def stop(self):
         self.running = False
@@ -115,6 +139,10 @@ class DiscoveryService:
             }
         ).encode("utf-8")
         self.sock.sendto(response, addr)
+        print(
+            f"[Discovery] Sent response to {addr} advertising "
+            f"video_udp={VIDEO_PORT} audio_tcp={AUDIO_PORT}"
+        )
 
         if glasses_ip not in self.discovered_ips:
             self.discovered_ips.add(glasses_ip)
@@ -193,10 +221,18 @@ class AudioReceiver:
         }
 
     def _accept_loop(self):
+        last_waiting_log = 0.0
         while self.running:
             try:
                 client, addr = self.sock.accept()
             except socket.timeout:
+                now = time.time()
+                if self.client_socket is None and now - last_waiting_log >= 5.0:
+                    last_waiting_log = now
+                    print(
+                        f"[Audio] Still waiting for TCP connection on port {AUDIO_PORT} "
+                        "(no glasses has dialed in yet)"
+                    )
                 continue
             except Exception as e:
                 if self.running:
@@ -355,11 +391,26 @@ class VideoReceiver:
         }
 
     def _receive_loop(self):
+        last_waiting_log = 0.0
+        logged_first_packet = False
         while self.running:
             try:
-                data, _ = self.sock.recvfrom(65535)
+                data, addr = self.sock.recvfrom(65535)
+                if not logged_first_packet:
+                    logged_first_packet = True
+                    print(
+                        f"[Video] First UDP packet received from {addr} "
+                        f"({len(data)} bytes)"
+                    )
                 self._handle_packet(data)
             except socket.timeout:
+                now = time.time()
+                if not logged_first_packet and now - last_waiting_log >= 5.0:
+                    last_waiting_log = now
+                    print(
+                        f"[Video] Still no UDP packets on port {VIDEO_PORT} "
+                        "(check firewall / hotspot client isolation)"
+                    )
                 continue
             except Exception as e:
                 if self.running:
