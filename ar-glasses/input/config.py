@@ -1,5 +1,10 @@
 """Configuration for the input subsystem: camera, microphone, glasses adapter."""
 
+import os
+
+from paths import DATA_DIR
+
+
 # Camera
 CAMERA_SOURCE = 0  # default webcam
 CAMERA_WIDTH = 1536
@@ -21,3 +26,8 @@ GLASSES_SPIN_INTERVAL_SEC = 0.005
 GLASSES_PREBUFFER_SECONDS = 5.0
 GLASSES_MAX_STAGING_SECONDS = 10.0
 GLASSES_DROP_LAG_SECONDS = 0.2
+
+
+# Training data capture (records emitted glasses pairs to disk)
+TRAINING_DATA = os.getenv("TRAINING_DATA", "false").lower() == "true"
+TRAINING_DATA_DIR = DATA_DIR / "training_data"
