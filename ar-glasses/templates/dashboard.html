@@ -18,6 +18,7 @@
   }
   .tabs {
     display: flex;
+    align-items: center;
     background: #111115;
     border-bottom: 1px solid #1f1f25;
     padding: 0 16px;
@@ -37,10 +38,49 @@
     color: #e6e6e6;
     border-bottom-color: #6ea8ff;
   }
+  .recording-indicator {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #8a8a94;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #555;
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    transition: background 0.2s ease;
+  }
+  .dot.idle { background: #e04050; box-shadow: 0 0 8px rgba(224, 64, 80, 0.5); }
+  .dot.recording {
+    background: #50d890;
+    box-shadow: 0 0 10px rgba(80, 216, 144, 0.7);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .dot.flushing {
+    background: transparent;
+    border: 2px solid #ffb347;
+    border-top-color: transparent;
+    animation: spin 0.9s linear infinite;
+    box-shadow: none;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 10px rgba(80, 216, 144, 0.7); }
+    50% { box-shadow: 0 0 18px rgba(80, 216, 144, 1); }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
   .tabpanel { display: none; flex: 1; min-height: 0; }
   .tabpanel.active { display: grid; }
   #video-panel {
-    grid-template-columns: 1fr 420px;
+    grid-template-columns: 1fr 440px;
     grid-template-rows: minmax(0, 1fr);
     overflow: hidden;
   }
@@ -79,23 +119,60 @@
     border-bottom: 1px solid #1f1f25;
   }
   .panel:last-child { border-bottom: none; }
-  .panel h2 {
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #111115;
+    border-bottom: 1px solid #1f1f25;
+  }
+  .panel-header h2 {
     margin: 0;
-    padding: 12px 16px;
     font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: #8a8a94;
-    background: #111115;
-    border-bottom: 1px solid #1f1f25;
   }
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #8a8a94;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle input { accent-color: #6ea8ff; cursor: pointer; }
   .panel .feed {
     flex: 1;
     overflow-y: auto;
-    padding: 12px 16px;
+    padding: 14px 18px;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.55;
+  }
+  .conversation {
+    margin-bottom: 18px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #1f1f25;
+  }
+  .conversation:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .conversation .speaker {
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .conversation .meta {
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 6px;
+  }
+  .conversation .transcript {
+    font-style: italic;
+    color: #cfcfd6;
+    line-height: 1.6;
   }
   .caption {
     margin-bottom: 8px;
@@ -111,14 +188,41 @@
   .caption .speaker { color: #6ea8ff; font-weight: 600; }
   .caption.wearer .speaker { color: #ffb347; }
   .retrieval {
-    margin-bottom: 10px;
-    padding: 10px;
+    margin-bottom: 14px;
+    padding: 12px 14px;
     background: #15151b;
     border-radius: 6px;
   }
-  .retrieval .name { color: #50d890; font-weight: 600; margin-bottom: 6px; }
+  .retrieval .name { color: #50d890; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+  .retrieval .id { color: #666; font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .retrieval .line {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    column-gap: 10px;
+    margin: 4px 0;
+    font-size: 12px;
+  }
+  .retrieval .line .label {
+    color: #8a8a94;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 11px;
+  }
+  .retrieval .line .value { color: #e6e6e6; }
+  .retrieval .facts {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #1f1f25;
+  }
+  .retrieval .facts .label {
+    color: #8a8a94;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
   .retrieval ul { margin: 0; padding-left: 18px; }
-  .retrieval li { margin: 2px 0; color: #cfcfd6; }
+  .retrieval li { margin: 2px 0; color: #cfcfd6; font-size: 12px; }
   .empty { color: #555; font-style: italic; }
   #status {
     font-size: 12px;
@@ -137,24 +241,40 @@
   <div class="tabs">
     <div class="tab active" data-target="video-panel">Video</div>
     <div class="tab" data-target="rms-panel">RMS</div>
+    <div class="recording-indicator" id="recording-indicator">
+      <span class="dot idle" id="recording-dot"></span>
+      <span id="recording-label">idle</span>
+    </div>
   </div>
 
   <div id="video-panel" class="tabpanel active">
     <div class="video">
       <img src="/video" alt="diarization stream">
-      {% if not fast %}
+      {% if not hide_audio %}
       <audio id="audio" src="/audio" autoplay controls></audio>
       {% endif %}
       <div id="status">processing…</div>
     </div>
     <div class="side">
       <div class="panel">
-        <h2>Captions</h2>
-        <div class="feed" id="captions"><div class="empty">waiting for first window flush…</div></div>
+        <div class="panel-header">
+          <h2>Transcription</h2>
+          <label class="toggle">
+            <input type="checkbox" id="diarization-toggle">
+            Show diarization
+          </label>
+        </div>
+        <div class="feed" id="transcription">
+          <div class="empty">waiting for first conversation flush…</div>
+        </div>
       </div>
       <div class="panel">
-        <h2>Retrieval</h2>
-        <div class="feed" id="retrieval"><div class="empty">no retrieval results yet</div></div>
+        <div class="panel-header">
+          <h2>Retrieval</h2>
+        </div>
+        <div class="feed" id="retrieval">
+          <div class="empty">no retrieval results yet</div>
+        </div>
       </div>
     </div>
   </div>
@@ -164,10 +284,15 @@
   </div>
 
 <script>
-const captionsEl = document.getElementById("captions");
+const transcriptionEl = document.getElementById("transcription");
 const retrievalEl = document.getElementById("retrieval");
 const statusEl = document.getElementById("status");
 const audioEl = document.getElementById("audio");
+const diarizationToggle = document.getElementById("diarization-toggle");
+const recordingDot = document.getElementById("recording-dot");
+const recordingLabel = document.getElementById("recording-label");
+
+let latestData = null;
 
 document.querySelectorAll(".tab").forEach(tab => {
   tab.addEventListener("click", () => {
@@ -176,6 +301,10 @@ document.querySelectorAll(".tab").forEach(tab => {
     document.querySelectorAll(".tabpanel").forEach(p => p.classList.toggle("active", p.id === target));
     if (target === "rms-panel") Plotly.Plots.resize(rmsPlot);
   });
+});
+
+diarizationToggle.addEventListener("change", () => {
+  if (latestData) renderTranscription(latestData);
 });
 
 const rmsPlot = document.getElementById("rms-plot");
@@ -218,35 +347,90 @@ function renderFeed(el, html) {
   if (pinned) el.scrollTop = el.scrollHeight;
 }
 
-function renderCaptions(items) {
-  if (!items.length) return;
+function renderTranscription(data) {
+  const showDiarization = diarizationToggle.checked;
+  if (showDiarization) {
+    renderSegments(data.captions || []);
+  } else {
+    renderConversations(data.conversations || []);
+  }
+}
+
+function renderConversations(items) {
+  if (!items.length) {
+    transcriptionEl.innerHTML = `<div class="empty">waiting for first conversation flush…</div>`;
+    return;
+  }
+  const html = items.map(c => `
+    <div class="conversation">
+      <div class="speaker">${escapeHtml(c.spoke_with)}</div>
+      <div class="meta">${c.start.toFixed(1)}s – ${c.end.toFixed(1)}s</div>
+      <div class="transcript">${escapeHtml(c.transcript)}</div>
+    </div>
+  `).join("");
+  renderFeed(transcriptionEl, html);
+}
+
+function renderSegments(items) {
+  if (!items.length) {
+    transcriptionEl.innerHTML = `<div class="empty">no diarization segments yet</div>`;
+    return;
+  }
   const html = items.map(c => {
     const wearer = c.speaker === "wearer" ? " wearer" : "";
     return `<div class="caption${wearer}">
       <div class="meta">${c.start.toFixed(2)}s – ${c.end.toFixed(2)}s</div>
-      <div><span class="speaker">${c.speaker}</span>: ${escapeHtml(c.text)}</div>
+      <div><span class="speaker">${escapeHtml(c.speaker)}</span>: ${escapeHtml(c.text)}</div>
     </div>`;
   }).join("");
-  renderFeed(captionsEl, html);
+  renderFeed(transcriptionEl, html);
 }
 
 function renderRetrieval(items) {
   if (!items.length) return;
   const html = items.map(r => {
-    const facts = r.facts.map(f => `<li>${escapeHtml(f)}</li>`).join("");
-    const pid = r.person_id != null ? ` <span style="color:#8a8a94">(id ${r.person_id})</span>` : "";
+    const pid = r.person_id != null ? `<span class="id">id ${r.person_id}</span>` : "";
+    const lastSpoke = r.last_spoke ? `
+      <div class="line">
+        <div class="label">Last spoke</div>
+        <div class="value">${escapeHtml(r.last_spoke)}</div>
+      </div>` : "";
+    const lastAbout = r.last_spoke_about ? `
+      <div class="line">
+        <div class="label">About</div>
+        <div class="value">${escapeHtml(r.last_spoke_about)}</div>
+      </div>` : "";
+    const askAbout = r.ask_about ? `
+      <div class="line">
+        <div class="label">Ask about</div>
+        <div class="value">${escapeHtml(r.ask_about)}</div>
+      </div>` : "";
+    const facts = (r.raw_facts && r.raw_facts.length)
+      ? `<div class="facts">
+          <div class="label">Facts</div>
+          <ul>${r.raw_facts.map(f => `<li>${escapeHtml(f)}</li>`).join("")}</ul>
+        </div>` : "";
     return `<div class="retrieval">
       <div class="name">${escapeHtml(r.name)}${pid}</div>
-      <ul>${facts}</ul>
+      ${lastSpoke}${lastAbout}${askAbout}${facts}
     </div>`;
   }).join("");
   renderFeed(retrievalEl, html);
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
+}
+
+function renderRecording(data) {
+  let cls, label;
+  if (data.flushing) { cls = "flushing"; label = "flushing…"; }
+  else if (data.recording) { cls = "recording"; label = "recording"; }
+  else { cls = "idle"; label = "idle"; }
+  recordingDot.className = `dot ${cls}`;
+  recordingLabel.textContent = label;
 }
 
 function syncAudio(data) {
@@ -268,13 +452,18 @@ async function tick() {
   try {
     const res = await fetch("/state.json");
     const data = await res.json();
-    renderCaptions(data.captions);
+    latestData = data;
+    renderTranscription(data);
     renderRetrieval(data.retrieval);
+    renderRecording(data);
     syncAudio(data);
     const ratePct = data.effective_rate > 0 ? ` · ${(data.effective_rate * 100).toFixed(0)}% realtime` : "";
+    const conversations = (data.conversations || []).length;
+    const segments = (data.captions || []).length;
+    const retrievals = (data.retrieval || []).length;
     statusEl.textContent = data.finished
-      ? `finished · ${data.captions.length} captions · ${data.retrieval.length} retrievals`
-      : `streaming${ratePct} · ${data.captions.length} captions · ${data.retrieval.length} retrievals`;
+      ? `finished · ${conversations} conversations · ${segments} segments · ${retrievals} retrievals`
+      : `streaming${ratePct} · ${conversations} conversations · ${segments} segments · ${retrievals} retrievals`;
   } catch (e) {
     statusEl.textContent = `error: ${e.message}`;
   }

@@ -2,17 +2,16 @@
 
 Streams:
   * annotated MJPEG frames with face boxes, identity labels, speaking rings
-  * a caption feed populated each window flush (speaker + transcript)
+  * flushed conversations (speaker + single transcript paragraph as sent to Zep)
+    with a toggle to fall back to segment-by-segment diarization
   * a retrieval panel populated from driver.retrieval_results
+  * a recording indicator (idle / recording / flushing)
   * a live RMS graph of the incoming audio stream (wallclock-paced)
-
-Tabs:
-  Video  — main view with captions + retrieval side panels
-  RMS    — plotly line chart of audio RMS over wallclock seconds
 
 Default mode serves audio via a browser <audio> tag and throttles the
 processing loop to video FPS for best-effort A/V sync. --fast skips
-audio, skips the throttle, and uses VISION_STRIDE.
+audio, skips the throttle, and uses VISION_STRIDE. --glasses also
+skips the audio element (live glasses mode produces no playback track).
 
 Usage:
   python dashboard.py path/to/video.mp4
@@ -69,6 +68,7 @@ from pipeline.live import (
     get_video_fps,
     pcm_to_wav,
 )
+from pipeline.recording_buffer import ChunkData, sanitize
 from pipeline.transcription import TranscriptionPipeline
 from processing.face_embedder import FaceEmbedder
 from processing.face_matcher import FaceMatcher
@@ -146,10 +146,13 @@ class DebugState:
     latest_jpeg: bytes | None = None
     audio_wav: bytes | None = None
     captions: list[dict] = field(default_factory=list)
+    conversations: list[dict] = field(default_factory=list)
     retrieval: list[dict] = field(default_factory=list)
     video_fps: float = 30.0
     video_time: float = 0.0
     effective_rate: float = 0.0
+    recording: bool = False
+    flushing: bool = False
     finished: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -218,10 +221,53 @@ def drain_new_retrieval(
 ) -> tuple[list[dict], int]:
     new_items = driver.retrieval_results[last_count:]
     rendered = [
-        {"name": name, "person_id": person_id, "facts": list(facts)}
-        for name, person_id, facts in new_items
+        {
+            "name": name,
+            "person_id": person_id,
+            "last_spoke": context.get("last_spoke"),
+            "last_spoke_about": context.get("last_spoke_about"),
+            "ask_about": context.get("ask_about"),
+            "raw_facts": list(context.get("raw_facts") or []),
+        }
+        for name, person_id, context in new_items
     ]
     return rendered, len(driver.retrieval_results)
+
+
+def install_flush_interceptor(driver: LivePipelineDriver, state: DebugState):
+    def flushing_sanitize_and_flush(chunks: list[ChunkData]):
+        with state.lock:
+            state.flushing = True
+        try:
+            conversation = sanitize(chunks)
+            if not conversation.transcript:
+                return
+
+            driver._store_interaction(conversation.person_id, conversation.transcript)
+            with state.lock:
+                state.conversations.append(
+                    {
+                        "spoke_with": conversation.spoke_with,
+                        "person_id": conversation.person_id,
+                        "transcript": conversation.transcript,
+                        "start": conversation.window_start,
+                        "end": conversation.window_end,
+                    }
+                )
+
+            print(
+                f"\n## RECORDING FLUSH [{conversation.window_start:.1f}s - "
+                f"{conversation.window_end:.1f}s] spoke_with={conversation.spoke_with}"
+            )
+            print(f"  {conversation.transcript}")
+
+            if driver.save_to_memory:
+                driver._save_conversation(conversation)
+        finally:
+            with state.lock:
+                state.flushing = False
+
+    driver._sanitize_and_flush = flushing_sanitize_and_flush
 
 
 def process_video(
@@ -255,6 +301,7 @@ def process_video(
     db, identity = build_identity(use_identity)
     transcription = TranscriptionPipeline()
     driver = LivePipelineDriver(identity, transcription, db)
+    install_flush_interceptor(driver, state)
 
     hud_server = None
     if HUD_BROADCAST_ENABLED:
@@ -329,6 +376,7 @@ def process_video(
                 state.latest_jpeg = jpeg
                 state.video_time = timestamp
                 state.effective_rate = effective_rate
+                state.recording = driver.recording_buffer.flag
 
             driver._publish_retrieval_results()
             new_retrieval, retrieval_seen = drain_new_retrieval(driver, retrieval_seen)
@@ -361,6 +409,8 @@ def process_video(
         remaining = driver.recording_buffer.drain()
         if remaining:
             driver._sanitize_and_flush(remaining)
+        with state.lock:
+            state.recording = False
         if driver.save_to_memory and flush_memory:
             print("[knowledge] waiting for pending saves...")
             flush_memory()
@@ -378,14 +428,15 @@ def process_video(
         print("[dashboard] processing finished")
 
 
-def build_app(state: DebugState, fast: bool) -> tuple[Flask, SocketIO]:
+def build_app(state: DebugState, fast: bool, glasses: bool) -> tuple[Flask, SocketIO]:
     template_dir = Path(__file__).parent / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
     socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
+    hide_audio = fast or glasses
 
     @app.route("/")
     def index():
-        return render_template("dashboard.html", fast=fast)
+        return render_template("dashboard.html", hide_audio=hide_audio)
 
     @app.route("/video")
     def video():
@@ -425,11 +476,14 @@ def build_app(state: DebugState, fast: bool) -> tuple[Flask, SocketIO]:
         with state.lock:
             return jsonify(
                 captions=state.captions,
+                conversations=state.conversations,
                 retrieval=state.retrieval,
                 finished=state.finished,
                 video_fps=state.video_fps,
                 video_time=state.video_time,
                 effective_rate=state.effective_rate,
+                recording=state.recording,
+                flushing=state.flushing,
             )
 
     return app, socketio
@@ -466,7 +520,7 @@ def main():
             sys.exit(1)
 
     state = DebugState()
-    app, socketio = build_app(state, args.fast)
+    app, socketio = build_app(state, args.fast, args.glasses)
     rms_graph = RmsLiveGraph(socketio, sample_rate=SAMPLE_RATE)
 
     worker = threading.Thread(

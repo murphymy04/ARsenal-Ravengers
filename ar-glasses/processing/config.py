@@ -6,7 +6,7 @@ import os
 
 from paths import DATA_DIR
 
-AUTO_ENROLL_ENABLED = os.getenv("AUTO_ENROLL_ENABLED", "true").lower() == "true"
+AUTO_ENROLL_ENABLED = os.getenv("AUTO_ENROLL_ENABLED", "false").lower() == "true"
 
 # Face detection (MediaPipe BlazeFace)
 # "short_range" — Tasks API, optimised for faces < ~2 m (selfie-style)
