@@ -26,7 +26,11 @@ from processing.speaking_detector import SpeakingDetector
 from processing.vad_speaker import VadSpeaker
 from storage.speaking_log import SpeakingLog
 
-from config import RETRIEVAL_MIN_TRACK_FRAMES, SPEAKING_BACKEND
+from config import (
+    RETRIEVAL_MAX_PENDING_FRAMES,
+    RETRIEVAL_MIN_TRACK_FRAMES,
+    SPEAKING_BACKEND,
+)
 
 
 def _create_speaker(fps: float, static_boundary: float | None = None):
@@ -96,13 +100,15 @@ class DiarizationPipeline:
                         continue
                     idx = track_ids.index(tid)
                     match = smoothed[idx]
-                    del self._pending_retrieval[tid]
                     if match.is_known:
                         print(
                             f"[retrieval] QUEUED {match.name} "
                             f"(track={tid}, t={timestamp:.1f}s)"
                         )
                         self._track_event_queue.put_nowait((tid, match, timestamp))
+                        del self._pending_retrieval[tid]
+                    elif self._pending_retrieval[tid] >= RETRIEVAL_MAX_PENDING_FRAMES:
+                        del self._pending_retrieval[tid]
 
             for face, tid in zip(faces, track_ids, strict=False):
                 self._speaker.add_crop(tid, face.crop)
