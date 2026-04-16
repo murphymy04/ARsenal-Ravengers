@@ -31,6 +31,7 @@ from pipeline.identity import FullIdentity
 from pipeline.recording_buffer import (
     ChunkData,
     RecordingBuffer,
+    SanitizedConversation,
     detect_long_turn,
     sanitize,
 )
@@ -125,75 +126,37 @@ class LivePipelineDriver:
         self._retrieval_result_queue = None
         self._hud_server = None
 
-    def _dominant_person_id(self, segments: list[dict]) -> int | None:
-        counts: dict[int, int] = {}
-        for seg in segments:
-            pid = seg.get("person_id")
-            if pid is not None:
-                counts[pid] = counts.get(pid, 0) + 1
-
-        if not counts:
-            return None
-
-        total = sum(counts.values())
-        viable = {pid: n for pid, n in counts.items() if n / total >= 0.1}
-        return max(viable, key=viable.get) if viable else None
-
-    def _resolve_and_save(self, segments: list[dict]):
-        person_id = self._dominant_person_id(segments)
-
-        if person_id is None or not self._db:
-            self._store_interaction(None, segments)
+    def _save_conversation(self, conversation: SanitizedConversation):
+        if conversation.person_id is None or not self._db:
             return
-        person = self._db.get_person(person_id)
-        if not person:
-            self._store_interaction(person_id, segments)
+        person = self._db.get_person(conversation.person_id)
+        if not person or not person.is_labeled:
+            label = person.name if person else "unknown"
+            print(f"  [knowledge] skipping Zep — {label} is not labeled")
             return
-
-        self._store_interaction(person_id, segments)
-
-        if not person.is_labeled:
-            print(f"  [knowledge] skipping Zep — {person.name} is not labeled")
-            return
-
-        resolved = []
-        for seg in segments:
-            if seg.get("person_id") == person_id:
-                resolved.append({**seg, "speaker": person.name})
-            else:
-                resolved.append(seg)
 
         if save_to_memory is None:
             raise RuntimeError(
                 "SAVE_TO_MEMORY enabled but knowledge support unavailable."
             )
-        wearer_name = next(
-            (s["speaker"] for s in resolved if s.get("person_id") != person_id),
-            "Wearer",
-        )
-        save_to_memory(resolved, wearer_name=wearer_name, other_name=person.name)
+        save_to_memory(conversation.transcript, other_name=person.name)
         print(f"  [knowledge] flushed to Zep with resolved name: {person.name}")
 
     def _sanitize_and_flush(self, chunks: list[ChunkData]):
-        sanitized = sanitize(chunks)
-        combined: list[dict] = []
-        for chunk in sanitized:
-            combined.extend(chunk.combined)
-        if not combined:
+        conversation = sanitize(chunks)
+        if not conversation.transcript:
             return
-        window_start = sanitized[0].window_start
-        window_end = sanitized[-1].window_end
+
+        self._store_interaction(conversation.person_id, conversation.transcript)
+
         print(
-            f"\n## RECORDING FLUSH [{window_start:.1f}s - {window_end:.1f}s] "
-            f"{len(sanitized)} chunks, {len(combined)} segments"
+            f"\n## RECORDING FLUSH [{conversation.window_start:.1f}s - "
+            f"{conversation.window_end:.1f}s] spoke_with={conversation.spoke_with}"
         )
-        for seg in combined:
-            print(
-                f"  [{seg['start']:7.2f} - {seg['end']:7.2f}] "
-                f"{seg['speaker']}: {seg['text']}"
-            )
+        print(f"  {conversation.transcript}")
+
         if self.save_to_memory:
-            self._resolve_and_save(combined)
+            self._save_conversation(conversation)
 
     def _publish_retrieval_results(self):
         if not self._retrieval_result_queue:
@@ -226,10 +189,9 @@ class LivePipelineDriver:
             else:
                 print("  [hud] broadcast disabled — not sending")
 
-    def _store_interaction(self, person_id: int | None, segments: list[dict]):
+    def _store_interaction(self, person_id: int | None, transcript: str):
         if not self._db:
             return
-        transcript = "\n".join(f"{seg['speaker']}: {seg['text']}" for seg in segments)
         self._db.add_interaction(person_id, transcript)
 
     def run(

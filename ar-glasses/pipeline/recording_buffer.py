@@ -10,14 +10,22 @@ Redundant Zep episodes are acceptable — they are synthesized at retrieval
 time — so this heuristic favours recording too much over too little.
 """
 
+import io
+import tempfile
+import wave
+from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
+from groq import Groq
 from pipeline.config import (
     DIARIZATION_QUIET_CHUNKS_TO_FLUSH,
     DIARIZATION_TURN_DOMINANCE,
     DIARIZATION_TURN_LENGTH,
 )
+
+from config import SAMPLE_RATE
 
 
 @dataclass
@@ -99,14 +107,67 @@ def detect_long_turn(
     return best
 
 
-def sanitize(buffer: list[ChunkData]) -> list[ChunkData]:
-    """Stub: offline diarization pass over the buffered chunks.
+@dataclass
+class SanitizedConversation:
+    spoke_with: str
+    person_id: int | None
+    transcript: str
+    window_start: float
+    window_end: float
 
-    Will rerun diarization on the joined audio and rebuild the combined
-    transcript with refined speaker assignments. For now, pass through
-    unchanged so the rest of the pipeline can be exercised.
-    """
-    return buffer
+
+_groq = Groq()
+
+
+def _pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
+    pcm16 = (samples * 32767).clip(-32768, 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm16.tobytes())
+    return buf.getvalue()
+
+
+def _transcribe(wav_bytes: bytes) -> str:
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        tmp.write(wav_bytes)
+    try:
+        with open(tmp_path, "rb") as f:
+            response = _groq.audio.transcriptions.create(
+                file=(tmp_path.name, f),
+                model="whisper-large-v3",
+                response_format="verbose_json",
+            )
+        return " ".join(seg["text"].strip() for seg in response.segments)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def sanitize(buffer: list[ChunkData]) -> SanitizedConversation:
+    all_audio = np.concatenate([chunk.audio for chunk in buffer])
+    wav_bytes = _pcm_to_wav(all_audio)
+    transcript = _transcribe(wav_bytes)
+
+    counts: Counter[tuple[int | None, str]] = Counter()
+    for chunk in buffer:
+        for seg in chunk.diarization_segments:
+            counts[(seg["person_id"], seg["name"])] += 1
+
+    if counts:
+        (person_id, name), _ = counts.most_common(1)[0]
+    else:
+        person_id, name = None, "Unknown"
+
+    return SanitizedConversation(
+        spoke_with=name,
+        person_id=person_id,
+        transcript=transcript,
+        window_start=buffer[0].window_start,
+        window_end=buffer[-1].window_end,
+    )
 
 
 @dataclass

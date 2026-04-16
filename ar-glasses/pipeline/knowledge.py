@@ -14,6 +14,7 @@ logging.getLogger("neo4j.debug").setLevel(logging.CRITICAL)
 logging.getLogger("neo4j.io").setLevel(logging.CRITICAL)
 logging.getLogger("neo4j").setLevel(logging.CRITICAL)
 
+
 class Person(BaseModel):
     """A person involved in or mentioned during a conversation.
     This includes the wearer and anyone they speak with."""
@@ -55,18 +56,25 @@ EDGE_TYPE_MAP: dict[tuple[str, str], list[str]] = {
 
 EXTRACTION_INSTRUCTIONS = """\
 This is a transcript from smart glasses worn by a person (the "wearer").
-The wearer is recording a face-to-face conversation with another person.
+The wearer is having a face-to-face conversation with another person.
+Speaker attribution in the transcript is NOT reliable — treat it as a \
+single mixed stream.
 
 Key rules:
 - Create a Person entity for the wearer with role="wearer".
 - Always create a SPOKE_WITH edge between the wearer and the other person.
+- Default assumption: statements describe or come from the OTHER person \
+(the one the wearer is meeting), not the wearer. Attribute facts to the \
+other person unless the content is unmistakably self-referential by the wearer.
+- Focus on learning about the other person: their work, projects, opinions, \
+plans, interests, and background.
 - Extract concrete facts as edges: opinions stated, products discussed, \
 plans mentioned, preferences expressed.
-- Capture BOTH speakers' contributions. The wearer's questions and statements \
-matter too — "wearer asked about X", "wearer confirmed Y".
 - For products/tech, extract specific details (features, comparisons, opinions).
-- Prefer specific facts over vague summaries. "X said Y is better than Z \
-because of W" is better than "X discussed Y".
+- Prefer specific facts over vague summaries. "X works on Y because of Z" \
+is better than "X discussed Y".
+- Skip filler, back-channel responses, and meta-discussion about the \
+recording setup or glasses themselves.
 """
 
 
@@ -94,7 +102,7 @@ class KnowledgeStore:
 
     def save(
         self,
-        segments: list[dict],
+        transcript: str,
         wearer_name: str = "Wearer",
         other_name: str | None = None,
         reference_time: datetime | None = None,
@@ -106,17 +114,15 @@ class KnowledgeStore:
         elif reference_time.tzinfo is None:
             reference_time = reference_time.replace(tzinfo=UTC)
 
-        speakers = list(dict.fromkeys(seg["speaker"] for seg in segments))
-        other = other_name or next((s for s in speakers if s != wearer_name), None)
-
+        other = other_name or "someone"
         date_str = reference_time.strftime("%Y-%m-%d")
-        episode_name = f"{wearer_name} spoke with {other or 'someone'} on {date_str}"
-        episode_body = "\n".join(f"{seg['speaker']}: {seg['text']}" for seg in segments)
+        episode_name = f"{wearer_name} spoke with {other} on {date_str}"
 
-        topics = _extract_topic_hint(segments)
+        topics = _extract_topic_hint(transcript)
         source_desc = (
-            f"Face-to-face conversation recorded by {wearer_name}'s smart glasses. "
-            f"Participants: {', '.join(speakers)}."
+            f"Transcript of face-to-face conversation between {wearer_name} "
+            f"and {other}. Speaker attribution is unavailable; "
+            f"treat statements as primarily describing {other}."
         )
         if topics:
             source_desc += f" Topics discussed: {topics}."
@@ -124,7 +130,7 @@ class KnowledgeStore:
         async def _add():
             await self._client.add_episode(
                 name=episode_name,
-                episode_body=episode_body,
+                episode_body=transcript,
                 source=EpisodeType.text,
                 source_description=source_desc,
                 reference_time=reference_time,
@@ -157,11 +163,10 @@ class KnowledgeStore:
         self._thread.join(timeout=5)
 
 
-def _extract_topic_hint(segments: list[dict]) -> str:
-    all_text = " ".join(seg["text"] for seg in segments).lower()
-    if len(all_text) < 50:
+def _extract_topic_hint(transcript: str) -> str:
+    if len(transcript) < 50:
         return ""
-    words = all_text.split()
+    words = transcript.lower().split()
     unique = list(dict.fromkeys(w for w in words if len(w) > 5))
     return ", ".join(unique[:10])
 
@@ -180,7 +185,7 @@ atexit.register(_cleanup)
 
 
 def save_to_memory(
-    segments: list[dict],
+    transcript: str,
     wearer_name: str = "Wearer",
     other_name: str | None = None,
     reference_time: datetime | None = None,
@@ -188,7 +193,7 @@ def save_to_memory(
     global _store
     if _store is None:
         _store = KnowledgeStore()
-    _store.save(segments, wearer_name, other_name, reference_time)
+    _store.save(transcript, wearer_name, other_name, reference_time)
 
 
 def flush_memory(timeout: float = 120):
