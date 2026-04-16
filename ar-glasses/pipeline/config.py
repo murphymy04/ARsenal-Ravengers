@@ -11,7 +11,7 @@ SILENCE_THRESHOLD = 2.0  # seconds of silence before processing
 
 
 # Live pipeline
-LIVE_BUFFER_SECONDS = 10  # process audio/video in N-second windows
+LIVE_BUFFER_SECONDS = 7  # process audio/video in N-second windows
 VISION_STRIDE = 5  # process faces every Nth frame for accelerated video processing
 
 
@@ -28,7 +28,7 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ravengers")
 DIARIZATION_TURN_LENGTH = float(os.getenv("DIARIZATION_TURN_LENGTH", "3.0"))
 DIARIZATION_TURN_DOMINANCE = float(os.getenv("DIARIZATION_TURN_DOMINANCE", "0.9"))
 DIARIZATION_QUIET_CHUNKS_TO_FLUSH = int(
-    os.getenv("DIARIZATION_QUIET_CHUNKS_TO_FLUSH", "2")
+    os.getenv("DIARIZATION_QUIET_CHUNKS_TO_FLUSH", "1")
 )
 
 
