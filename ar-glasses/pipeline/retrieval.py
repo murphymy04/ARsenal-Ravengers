@@ -191,7 +191,10 @@ class RetrievalWorker:
             }
 
     async def _fetch_all(self, name: str) -> tuple[list[str], EpisodicNode | None]:
-        search_coro = self._client.search(f"{name} projects work interests")
+        search_coro = self._client.search(
+            f"What does {name} do? What are {name}'s projects, plans, and interests?",
+            num_results=3,
+        )
         episodes_coro = self._client.retrieve_episodes(datetime.now(UTC), last_n=50)
         search_results, episodes = await asyncio.gather(search_coro, episodes_coro)
         facts = [r.fact for r in search_results]
