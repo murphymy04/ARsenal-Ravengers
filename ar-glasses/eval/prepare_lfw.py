@@ -36,8 +36,8 @@ LFW_URLS = [
     "https://vis-www.cs.umass.edu/lfw/lfw.tgz",
     "http://vis-www.cs.umass.edu/lfw/lfw.tgz",
 ]
-LFW_TGZ  = "lfw.tgz"
-LFW_DIR  = "lfw"
+LFW_TGZ = "lfw.tgz"
+LFW_DIR = "lfw"
 
 
 def _download(dest: Path):
@@ -60,7 +60,7 @@ def _download(dest: Path):
     print("  1. Go to https://www.kaggle.com/datasets/jessicali9530/lfw-dataset")
     print("     or search 'LFW dataset lfw.tgz' and download the archive.")
     print(f"  2. Place the file at: {dest}")
-    print(f"  3. Re-run: python eval/prepare_lfw.py --file \"{dest}\"")
+    print(f'  3. Re-run: python eval/prepare_lfw.py --file "{dest}"')
     sys.exit(1)
 
 
@@ -75,7 +75,7 @@ def prepare(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     tgz_path = local_file if local_file else work_dir / LFW_TGZ
-    lfw_path  = work_dir / LFW_DIR
+    lfw_path = work_dir / LFW_DIR
 
     # --- Download ---
     if not tgz_path.exists():
@@ -95,10 +95,7 @@ def prepare(
     # --- Filter and copy ---
     all_people = sorted(p for p in lfw_path.iterdir() if p.is_dir())
 
-    eligible = [
-        p for p in all_people
-        if len(list(p.glob("*.jpg"))) >= min_images
-    ]
+    eligible = [p for p in all_people if len(list(p.glob("*.jpg"))) >= min_images]
 
     print(f"\nTotal people in LFW          : {len(all_people)}")
     print(f"People with ≥{min_images} images        : {len(eligible)}")
@@ -134,38 +131,47 @@ def main():
 
     parser = argparse.ArgumentParser(description="Prepare LFW subset for evaluate.py.")
     parser.add_argument(
-        "--min-images", type=int, default=10,
+        "--min-images",
+        type=int,
+        default=10,
         help="Minimum images per person to include (default: 10).",
     )
     parser.add_argument(
-        "--max-images", type=int, default=20,
+        "--max-images",
+        type=int,
+        default=20,
         help="Maximum images per person to copy (default: 20).",
     )
     parser.add_argument(
-        "--people", type=int, default=30,
+        "--people",
+        type=int,
+        default=30,
         help="Max number of people to include (default: 30, 0 = all eligible).",
     )
     parser.add_argument(
-        "--work-dir", default="eval/lfw_raw",
+        "--work-dir",
+        default="eval/lfw_raw",
         help="Directory to download and extract LFW into (default: eval/lfw_raw).",
     )
     parser.add_argument(
-        "--output", default="eval/dataset",
+        "--output",
+        default="eval/dataset",
         help="Output dataset directory (default: eval/dataset).",
     )
     parser.add_argument(
-        "--file", default=None,
+        "--file",
+        default=None,
         help="Path to a manually downloaded lfw.tgz (skips download).",
     )
     args = parser.parse_args()
 
     prepare(
-        work_dir   = (root / args.work_dir).resolve(),
-        output_dir = (root / args.output).resolve(),
-        min_images = args.min_images,
-        max_images = args.max_images,
-        max_people = args.people,
-        local_file = Path(args.file).resolve() if args.file else None,
+        work_dir=(root / args.work_dir).resolve(),
+        output_dir=(root / args.output).resolve(),
+        min_images=args.min_images,
+        max_images=args.max_images,
+        max_people=args.people,
+        local_file=Path(args.file).resolve() if args.file else None,
     )
 
 

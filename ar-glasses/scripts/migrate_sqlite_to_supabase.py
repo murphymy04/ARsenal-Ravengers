@@ -24,7 +24,9 @@ def _parse_sqlite_datetime(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
-def _load_sqlite_snapshot(sqlite_path: Path) -> tuple[list[dict], list[dict], list[dict]]:
+def _load_sqlite_snapshot(
+    sqlite_path: Path,
+) -> tuple[list[dict], list[dict], list[dict]]:
     conn = sqlite3.connect(str(sqlite_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
@@ -42,13 +44,19 @@ def _load_sqlite_snapshot(sqlite_path: Path) -> tuple[list[dict], list[dict], li
         "FROM interactions ORDER BY interaction_id"
     ).fetchall()
     conn.close()
-    return [dict(r) for r in people], [dict(r) for r in embeddings], [dict(r) for r in interactions]
+    return (
+        [dict(r) for r in people],
+        [dict(r) for r in embeddings],
+        [dict(r) for r in interactions],
+    )
 
 
 def main():
     load_dotenv(ROOT / ".env")
 
-    parser = argparse.ArgumentParser(description="Flush local SQLite people.db to Supabase")
+    parser = argparse.ArgumentParser(
+        description="Flush local SQLite people.db to Supabase"
+    )
     parser.add_argument("--sqlite-path", type=Path, default=ROOT / "data" / "people.db")
     parser.add_argument(
         "--truncate",
@@ -57,7 +65,9 @@ def main():
     )
     args = parser.parse_args()
 
-    people_rows, embedding_rows, interaction_rows = _load_sqlite_snapshot(args.sqlite_path)
+    people_rows, embedding_rows, interaction_rows = _load_sqlite_snapshot(
+        args.sqlite_path
+    )
     remote = SupabaseDatabase()
 
     if not remote.schema_ready():
@@ -88,10 +98,14 @@ def main():
         remote.import_embedding(
             embedding_id=row["embedding_id"],
             person_id=row["person_id"],
-            embedding=type("Embedding", (), {
-                "vector": np.frombuffer(row["vector"], dtype=np.float32).copy(),
-                "model_name": row["model_name"],
-            })(),
+            embedding=type(
+                "Embedding",
+                (),
+                {
+                    "vector": np.frombuffer(row["vector"], dtype=np.float32).copy(),
+                    "model_name": row["model_name"],
+                },
+            )(),
             created_at=_parse_sqlite_datetime(row["created_at"]),
         )
 
@@ -107,7 +121,9 @@ def main():
 
     people = remote.get_all_people()
     total_embeddings = sum(len(p.embeddings) for p in people)
-    print(f"Done. Supabase now has {len(people)} people and {total_embeddings} embeddings.")
+    print(
+        f"Done. Supabase now has {len(people)} people and {total_embeddings} embeddings."
+    )
 
 
 if __name__ == "__main__":

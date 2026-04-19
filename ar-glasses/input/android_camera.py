@@ -74,9 +74,15 @@ class AndroidCamera:
 
         self._ffmpeg = subprocess.Popen(
             [
-                "ffmpeg", "-i", "pipe:0",
-                "-vf", f"transpose=2,scale={width}:{height}",
-                "-f", "rawvideo", "-pix_fmt", "bgr24",
+                "ffmpeg",
+                "-i",
+                "pipe:0",
+                "-vf",
+                f"transpose=2,scale={width}:{height}",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
                 "pipe:1",
             ],
             stdin=subprocess.PIPE,
@@ -135,9 +141,11 @@ class AndroidCamera:
             raw = self._ffmpeg.stdout.read(self._frame_bytes)
             if len(raw) < self._frame_bytes:
                 break
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape(
-                (self._height, self._width, 3)
-            ).copy()
+            frame = (
+                np.frombuffer(raw, dtype=np.uint8)
+                .reshape((self._height, self._width, 3))
+                .copy()
+            )
             with self._lock:
                 self._latest = frame
         self._opened = False
@@ -181,15 +189,21 @@ class AndroidCamera:
 # Platform helpers
 # ---------------------------------------------------------------------------
 
+
 def _create_win_pipe():
     """Create a Windows named pipe with a unique name; return (path, handle)."""
     import win32pipe
+
     pipe_name = rf"\\.\pipe\ar_camera_{uuid.uuid4().hex[:8]}"
     handle = win32pipe.CreateNamedPipe(
         pipe_name,
         win32pipe.PIPE_ACCESS_INBOUND,
         win32pipe.PIPE_TYPE_BYTE | win32pipe.PIPE_WAIT,
-        1, _CHUNK, _CHUNK, 0, None,
+        1,
+        _CHUNK,
+        _CHUNK,
+        0,
+        None,
     )
     return pipe_name, handle
 
@@ -199,6 +213,7 @@ def _win_pipe_relay(handle, ffmpeg_stdin, scrcpy_proc):
     import win32pipe
     import win32file
     import pywintypes
+
     win32pipe.ConnectNamedPipe(handle, None)
     try:
         while scrcpy_proc.poll() is None:
@@ -215,6 +230,7 @@ def _win_pipe_relay(handle, ffmpeg_stdin, scrcpy_proc):
 def _create_fifo() -> str:
     """Create a POSIX FIFO; return its path."""
     import tempfile
+
     tmpdir = tempfile.mkdtemp(prefix="ar_android_")
     path = os.path.join(tmpdir, "cam.mkv")
     os.mkfifo(path)
@@ -268,8 +284,11 @@ class IPWebcamCamera:
         4. Pass --camera ipwebcam to demo.py / main.py.
     """
 
-    def __init__(self, url: str = _IPWEBCAM_DEFAULT_URL,
-                 rotation: int = cv2.ROTATE_90_COUNTERCLOCKWISE):
+    def __init__(
+        self,
+        url: str = _IPWEBCAM_DEFAULT_URL,
+        rotation: int = cv2.ROTATE_90_COUNTERCLOCKWISE,
+    ):
         """
         Args:
             url:      MJPEG stream URL from the IP Webcam app.

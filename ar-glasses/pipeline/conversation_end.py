@@ -20,6 +20,7 @@ def _get_client() -> Groq:
         _client = Groq()
     return _client
 
+
 _SYSTEM_PROMPT = (
     "You are analyzing a transcript snippet from a live conversation. "
     "Determine if the conversation has ENDED in this snippet. "

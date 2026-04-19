@@ -17,8 +17,12 @@ def sync_supabase_mode(sqlite_path: str, truncate: bool = False):
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    parser = argparse.ArgumentParser(description="Sync local SQLite people.db to Supabase")
-    parser.add_argument("--sqlite-path", type=str, default=str(root / "data" / "people.db"))
+    parser = argparse.ArgumentParser(
+        description="Sync local SQLite people.db to Supabase"
+    )
+    parser.add_argument(
+        "--sqlite-path", type=str, default=str(root / "data" / "people.db")
+    )
     parser.add_argument("--truncate", action="store_true")
     args = parser.parse_args()
     sync_supabase_mode(args.sqlite_path, truncate=args.truncate)

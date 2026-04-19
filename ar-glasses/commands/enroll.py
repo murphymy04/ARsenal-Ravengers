@@ -31,7 +31,11 @@ def enroll_mode(db: Database, detector: FaceDetector, embedder: FaceEmbedder):
         cv2.putText(
             frame,
             f"Enrolling: {name} | Captured: {len(captured_images)} | 'c'=capture 'q'=done",
-            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2,
         )
         cv2.imshow("Enrollment", frame)
 

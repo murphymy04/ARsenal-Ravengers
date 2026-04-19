@@ -52,8 +52,12 @@ else:
                     st.write("📷 No image")
 
                 badge = "✅" if person.is_labeled else "❓ auto"
-                last_seen = person.last_seen.strftime("%H:%M") if person.last_seen else "—"
-                st.caption(f"{badge} · {len(person.embeddings)} embeddings · last seen {last_seen}")
+                last_seen = (
+                    person.last_seen.strftime("%H:%M") if person.last_seen else "—"
+                )
+                st.caption(
+                    f"{badge} · {len(person.embeddings)} embeddings · last seen {last_seen}"
+                )
 
                 new_name = st.text_input(
                     "Name",
@@ -64,11 +68,22 @@ else:
                 )
                 btn_save, btn_del = st.columns(2)
                 with btn_save:
-                    if st.button("💾 Save", key=f"save_{person.person_id}", use_container_width=True):
-                        st.session_state["_pending_rename"] = (person.person_id, new_name)
+                    if st.button(
+                        "💾 Save",
+                        key=f"save_{person.person_id}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["_pending_rename"] = (
+                            person.person_id,
+                            new_name,
+                        )
                         st.rerun()
                 with btn_del:
-                    if st.button("🗑️ Delete", key=f"del_{person.person_id}", use_container_width=True):
+                    if st.button(
+                        "🗑️ Delete",
+                        key=f"del_{person.person_id}",
+                        use_container_width=True,
+                    ):
                         st.session_state["_pending_delete"] = person.person_id
                         st.rerun()
 

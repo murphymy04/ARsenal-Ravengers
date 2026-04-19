@@ -23,8 +23,7 @@ def merge_clusters_mode(db: Database):
         return
 
     means = {
-        p.person_id: np.mean([e.vector for e in p.embeddings], axis=0)
-        for p in people
+        p.person_id: np.mean([e.vector for e in p.embeddings], axis=0) for p in people
     }
 
     suggestions = []
@@ -41,10 +40,14 @@ def merge_clusters_mode(db: Database):
     suggestions.sort(reverse=True)
 
     if not suggestions:
-        print(f"No cluster pairs found with similarity >= {MERGE_SIMILARITY_THRESHOLD}.")
+        print(
+            f"No cluster pairs found with similarity >= {MERGE_SIMILARITY_THRESHOLD}."
+        )
         return
 
-    print(f"Found {len(suggestions)} candidate merge(s). Higher = more likely the same person.\n")
+    print(
+        f"Found {len(suggestions)} candidate merge(s). Higher = more likely the same person.\n"
+    )
     merged_ids: set[int] = set()
 
     for sim, pa, pb in suggestions:
@@ -58,7 +61,9 @@ def merge_clusters_mode(db: Database):
             f"\n         B: '{pb.name}' (ID {pb.person_id}, {len(pb.embeddings)} emb, seen {last_b})"
         )
 
-        choice = input("  Merge? (a=keep A name, b=keep B name, n=skip): ").strip().lower()
+        choice = (
+            input("  Merge? (a=keep A name, b=keep B name, n=skip): ").strip().lower()
+        )
         if choice == "a":
             do_merge(db, keep=pa, discard=pb)
             merged_ids.add(pb.person_id)

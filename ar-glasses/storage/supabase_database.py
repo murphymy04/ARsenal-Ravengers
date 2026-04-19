@@ -72,7 +72,9 @@ class SupabaseDatabase:
         )
         if response.status_code >= 400:
             detail = response.text.strip()
-            raise RuntimeError(f"Supabase request failed [{response.status_code}]: {detail}")
+            raise RuntimeError(
+                f"Supabase request failed [{response.status_code}]: {detail}"
+            )
         if not response.text:
             return None
         return response.json()
@@ -172,8 +174,12 @@ class SupabaseDatabase:
             headers={"Prefer": "return=representation,resolution=merge-duplicates"},
         )
 
-    def add_auto_person(self, thumbnail: Optional[np.ndarray] = None) -> tuple[int, str]:
-        person_id = self.add_person("__pending__", is_labeled=False, thumbnail=thumbnail)
+    def add_auto_person(
+        self, thumbnail: Optional[np.ndarray] = None
+    ) -> tuple[int, str]:
+        person_id = self.add_person(
+            "__pending__", is_labeled=False, thumbnail=thumbnail
+        )
         auto_name = f"Person {person_id}"
         self.update_person(person_id, name=auto_name)
         return person_id, auto_name
@@ -219,11 +225,16 @@ class SupabaseDatabase:
         embedding_rows = self._request(
             "GET",
             "embeddings",
-            params={"select": "person_id,vector,model_name", "order": "embedding_id.asc"},
+            params={
+                "select": "person_id,vector,model_name",
+                "order": "embedding_id.asc",
+            },
         )
         by_person: dict[int, list[FaceEmbedding]] = {}
         for row in embedding_rows:
-            by_person.setdefault(row["person_id"], []).append(self._embedding_from_row(row))
+            by_person.setdefault(row["person_id"], []).append(
+                self._embedding_from_row(row)
+            )
         return [
             self._person_from_row(row, by_person.get(row["person_id"], []))
             for row in people_rows
@@ -368,7 +379,9 @@ class SupabaseDatabase:
             for row in rows
         ]
 
-    def update_interaction_transcript(self, interaction_id: int, transcript: str) -> None:
+    def update_interaction_transcript(
+        self, interaction_id: int, transcript: str
+    ) -> None:
         """Update the transcript for an interaction."""
         self._request(
             "PATCH",
@@ -385,4 +398,3 @@ class SupabaseDatabase:
 
     def __exit__(self, *args):
         self.close()
-

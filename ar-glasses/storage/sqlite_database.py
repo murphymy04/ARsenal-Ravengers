@@ -59,7 +59,9 @@ class SQLiteDatabase:
     def _migrate_schema(self):
         """Add columns introduced after initial deployment (idempotent)."""
         try:
-            self._conn.execute("ALTER TABLE people ADD COLUMN is_labeled INTEGER DEFAULT 0")
+            self._conn.execute(
+                "ALTER TABLE people ADD COLUMN is_labeled INTEGER DEFAULT 0"
+            )
             self._conn.commit()
         except Exception:
             pass
@@ -89,9 +91,13 @@ class SQLiteDatabase:
         self._conn.commit()
         return cur.lastrowid
 
-    def add_auto_person(self, thumbnail: Optional[np.ndarray] = None) -> tuple[int, str]:
+    def add_auto_person(
+        self, thumbnail: Optional[np.ndarray] = None
+    ) -> tuple[int, str]:
         """Create an auto-labeled cluster entry. Returns (person_id, auto_name)."""
-        person_id = self.add_person("__pending__", is_labeled=False, thumbnail=thumbnail)
+        person_id = self.add_person(
+            "__pending__", is_labeled=False, thumbnail=thumbnail
+        )
         auto_name = f"Person {person_id}"
         self.update_person(person_id, name=auto_name)
         return person_id, auto_name
@@ -212,7 +218,9 @@ class SQLiteDatabase:
             for r in rows
         ]
 
-    def update_interaction_transcript(self, interaction_id: int, transcript: str) -> None:
+    def update_interaction_transcript(
+        self, interaction_id: int, transcript: str
+    ) -> None:
         """Update the transcript for an interaction."""
         self._conn.execute(
             "UPDATE interactions SET transcript = ? WHERE interaction_id = ?",
@@ -252,4 +260,3 @@ class SQLiteDatabase:
 
     def __exit__(self, *args):
         self.close()
-

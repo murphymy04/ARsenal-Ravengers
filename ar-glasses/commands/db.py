@@ -40,9 +40,11 @@ def db_delete_mode(db: Database):
         return
 
     if choice == "all":
-        confirm = input(
-            f"Delete ALL {len(people)} people? This cannot be undone. (yes/no): "
-        ).strip().lower()
+        confirm = (
+            input(f"Delete ALL {len(people)} people? This cannot be undone. (yes/no): ")
+            .strip()
+            .lower()
+        )
         if confirm == "yes":
             for p in people:
                 db.delete_person(p.person_id)
@@ -62,9 +64,9 @@ def db_delete_mode(db: Database):
         print(f"No person found with ID {person_id}.")
         return
 
-    confirm = input(
-        f"Delete '{person.name}' (ID {person_id})? (yes/no): "
-    ).strip().lower()
+    confirm = (
+        input(f"Delete '{person.name}' (ID {person_id})? (yes/no): ").strip().lower()
+    )
     if confirm == "yes":
         db.delete_person(person_id)
         print(f"Deleted '{person.name}'.")
