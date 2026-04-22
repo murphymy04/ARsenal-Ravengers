@@ -1,10 +1,8 @@
-"""Background worker that runs window-flush processing off the capture thread.
+"""Background worker for window-flush processing.
 
-Groq Whisper transcription and recording-buffer ingestion used to run inline
-in LivePipelineDriver.flush_window, blocking the consumer loop for 1-3s
-every LIVE_BUFFER_SECONDS. The worker consumes (segments, audio, window_start,
-window_end) tuples from a queue and produces (combined, diarization_segments)
-results on a result queue the main thread drains at its own cadence.
+Runs Groq transcription and recording-buffer ingestion on a daemon thread
+so the frame-capture loop isn't blocked. Consumers call submit() with the
+window payload and drain_results() at their own cadence.
 """
 
 import queue
@@ -17,7 +15,9 @@ from pipeline.recording_buffer import (
     ChunkData,
     RecordingBuffer,
     detect_long_turn,
+    pcm_to_wav,
 )
+from pipeline.retrieval import drain_results
 from pipeline.transcription import TranscriptionPipeline
 
 
@@ -26,12 +26,10 @@ class FlushWorker:
         self,
         transcription: TranscriptionPipeline,
         recording_buffer: RecordingBuffer,
-        pcm_to_wav: Callable[[np.ndarray], bytes],
         sanitize_and_flush: Callable[[list[ChunkData]], None],
     ):
         self._transcription = transcription
         self._recording_buffer = recording_buffer
-        self._pcm_to_wav = pcm_to_wav
         self._sanitize_and_flush = sanitize_and_flush
         self._work_queue: queue.Queue = queue.Queue()
         self._result_queue: queue.Queue = queue.Queue()
@@ -50,12 +48,7 @@ class FlushWorker:
         self._work_queue.put((diarization_segments, audio, window_start, window_end))
 
     def drain_results(self) -> list[tuple[list[dict], list[dict]]]:
-        results: list[tuple[list[dict], list[dict]]] = []
-        while True:
-            try:
-                results.append(self._result_queue.get_nowait())
-            except queue.Empty:
-                return results
+        return drain_results(self._result_queue)
 
     def stop(self, timeout: float = 180):
         self._work_queue.put(None)
@@ -80,7 +73,7 @@ class FlushWorker:
             self._result_queue.put(([], diarization_segments))
             return
 
-        wav_bytes = self._pcm_to_wav(audio)
+        wav_bytes = pcm_to_wav(audio)
         transcript_segments = self._transcription.run(wav_bytes)
 
         for seg in transcript_segments:

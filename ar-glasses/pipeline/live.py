@@ -9,13 +9,11 @@ swappable audio source (Microphone vs SimulatedMic) and clock function
 """
 
 import argparse
-import io
 import json
 import queue
 import subprocess
 import sys
 import time
-import wave
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -69,17 +67,6 @@ try:
     from pipeline.hud_broadcast import HudBroadcastServer
 except ImportError:
     HudBroadcastServer = None
-
-
-def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
-    pcm16 = (samples * 32767).clip(-32768, 32767).astype(np.int16)
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm16.tobytes())
-    return buf.getvalue()
 
 
 def extract_audio_pcm(video_path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
@@ -198,8 +185,7 @@ class LivePipelineDriver:
         self.flush_worker = FlushWorker(
             transcription=self.transcription,
             recording_buffer=self.recording_buffer,
-            pcm_to_wav=pcm_to_wav,
-            sanitize_and_flush=self._sanitize_and_flush,
+            sanitize_and_flush=lambda chunks: self._sanitize_and_flush(chunks),
         )
         self.flush_worker.start()
 
