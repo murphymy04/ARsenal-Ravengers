@@ -5,8 +5,9 @@ Stubbed for Phase 2 implementation.
 """
 
 import numpy as np
-from config import WHISPER_LANGUAGE, WHISPER_MODEL
 from models import TranscriptSegment
+
+from config import WHISPER_LANGUAGE, WHISPER_MODEL
 
 
 class AudioProcessor:

@@ -1,11 +1,9 @@
-"""Adapter between the glasses stream protocol and the live pipeline.
+"""Adapter between the scrcpy USB stream and the live pipeline.
 
-The glasses publish video (UDP, lossy) and audio (TCP, lossless) with their own
-clock embedded in packet headers. Wall-clock time on the laptop is not safe
-because video and audio would drift independently. The PairingLoop consumes
-both receivers and emits (frame, audio_slice, ts) triples using glasses
-timestamps as the PTS — each frame carries the audio slice covering
-[prev_frame_ts, this_frame_ts].
+ScrcpyStream delivers synchronized video frames and audio chunks over a single
+ADB/scrcpy connection. PairingLoop consumes both from the same ScrcpyStream
+and emits (frame, audio_slice, ts) triples using a monotonic ms counter as
+the PTS — each frame carries the audio slice covering [prev_frame_ts, this_frame_ts].
 
 GlassesCamera and GlassesMic expose the same surface pipeline/live.py already
 uses for Camera and Microphone, so no pipeline changes are required beyond a
@@ -18,7 +16,6 @@ import time
 from collections import deque
 from typing import Callable, Optional
 
-import cv2
 import numpy as np
 
 from config import (
@@ -30,12 +27,7 @@ from config import (
     TRAINING_DATA,
     TRAINING_DATA_DIR,
 )
-from input.glasses_net import (
-    AudioChunk,
-    AudioReceiver,
-    DiscoveryService,
-    VideoReceiver,
-)
+from input.glasses_net import AdbWatcher, AudioChunk, ScrcpyStream
 from input.training_recorder import TrainingRecorder
 
 
@@ -75,13 +67,11 @@ def slice_audio_by_timestamp(
 class PairingLoop:
     def __init__(
         self,
-        video_rx: VideoReceiver,
-        audio_rx: AudioReceiver,
+        stream: ScrcpyStream,
         max_pairs: int = GLASSES_PAIR_QUEUE_MAX,
         on_emit: Optional[Callable[[tuple], None]] = None,
     ):
-        self._video_rx = video_rx
-        self._audio_rx = audio_rx
+        self._stream = stream
         self.pairs: queue.Queue = queue.Queue(maxsize=max_pairs)
         self.on_emit = on_emit
 
@@ -132,7 +122,7 @@ class PairingLoop:
                 last_stats_print = now
                 self._log_stats()
 
-            frame = self._video_rx.get_frame_after(self._last_paired_seq)
+            frame = self._stream.get_frame_after(self._last_paired_seq)
             if frame is None:
                 time.sleep(GLASSES_SPIN_INTERVAL_SEC)
                 continue
@@ -159,9 +149,8 @@ class PairingLoop:
             if last_ts is None or first_ts is None:
                 continue
 
-            chunks = self._audio_rx.get_audio_range(last_ts, frame.timestamp)
+            chunks = self._stream.get_audio_range(last_ts, frame.timestamp)
             audio = slice_audio_by_timestamp(chunks, last_ts, frame.timestamp)
-            bgr = cv2.cvtColor(frame.data, cv2.COLOR_GRAY2BGR)
             ts_seconds = (frame.timestamp - first_ts) / 1000.0
 
             if not self._logged_first:
@@ -172,7 +161,7 @@ class PairingLoop:
                 )
 
             with self._staging_lock:
-                self._staging.append((bgr, audio, ts_seconds))
+                self._staging.append((frame.data, audio, ts_seconds))
                 while (
                     len(self._staging) > 1
                     and self._staging[-1][2] - self._staging[0][2]
@@ -199,10 +188,7 @@ class PairingLoop:
 
             while self._running:
                 with self._staging_lock:
-                    if not self._staging:
-                        pair = None
-                    else:
-                        pair = self._staging.popleft()
+                    pair = self._staging.popleft() if self._staging else None
 
                 if pair is None:
                     time.sleep(GLASSES_SPIN_INTERVAL_SEC)
@@ -242,7 +228,7 @@ class PairingLoop:
 
     def _wait_for_audio(self, target_ts: int) -> bool:
         while self._running:
-            latest = self._audio_rx.get_latest_audio_timestamp()
+            latest = self._stream.get_latest_audio_timestamp()
             if latest is not None and latest >= target_ts:
                 return True
             time.sleep(GLASSES_SPIN_INTERVAL_SEC)
@@ -263,9 +249,8 @@ class PairingLoop:
         self.pairs.put_nowait(pair)
 
     def _log_stats(self):
-        v_stats = self._video_rx.get_stats()
-        a_stats = self._audio_rx.get_stats()
-        latest_audio_ts = self._audio_rx.get_latest_audio_timestamp()
+        stats = self._stream.get_stats()
+        latest_audio_ts = self._stream.get_latest_audio_timestamp()
         with self._staging_lock:
             staging_depth = len(self._staging)
             staging_span = (
@@ -275,11 +260,11 @@ class PairingLoop:
             )
         print(
             f"[Pairing] stats: "
-            f"v_recv={v_stats['frames_received']} "
-            f"v_buf={v_stats['frames_buffered']} "
-            f"v_drop={v_stats['frames_dropped']} | "
-            f"a_recv={a_stats['chunks_received']} "
-            f"a_buf={a_stats['chunks_buffered']} "
+            f"v_recv={stats['frames_received']} "
+            f"v_buf={stats['frames_buffered']} "
+            f"v_drop={stats['frames_dropped']} | "
+            f"a_recv={stats['chunks_received']} "
+            f"a_buf={stats['chunks_buffered']} "
             f"a_ts={latest_audio_ts} | "
             f"staging={staging_depth} ({staging_span:.2f}s) "
             f"pair_q={self.pairs.qsize()}"
@@ -354,30 +339,24 @@ class GlassesCamera:
 
 class GlassesServer:
     def __init__(self, sample_rate: int = 16000):
-        self.discovery: Optional[DiscoveryService] = None
-        self.audio_rx = AudioReceiver()
-        self.video_rx = VideoReceiver()
+        self.stream = ScrcpyStream()
         self.recorder: Optional[TrainingRecorder] = (
             TrainingRecorder(TRAINING_DATA_DIR, sample_rate) if TRAINING_DATA else None
         )
         self.pairing = PairingLoop(
-            self.video_rx,
-            self.audio_rx,
+            self.stream,
             on_emit=self.recorder.write if self.recorder else None,
         )
         self.mic = GlassesMic(sample_rate)
         self.camera = GlassesCamera(self.pairing, self.mic)
-
-        self._audio_connected_once = False
-        self.audio_rx.on_connect_callback = self._on_audio_connect
+        self._connected_once = False
+        self.adb_watcher = AdbWatcher(
+            on_device_connected=self._on_device_connected,
+            on_device_disconnected=self._on_device_disconnected,
+        )
 
     def start(self) -> tuple[GlassesCamera, GlassesMic, Callable[[int], float]]:
-        self.discovery = DiscoveryService(
-            on_glasses_found=lambda ip: print(f"[GlassesServer] Glasses at {ip}")
-        )
-        self.discovery.start()
-        self.audio_rx.start()
-        self.video_rx.start()
+        self.adb_watcher.start()
         self.pairing.start()
 
         def clock_fn(frame_idx: int) -> float:
@@ -388,19 +367,21 @@ class GlassesServer:
     def stop(self):
         self.camera.close()
         self.pairing.stop()
-        self.video_rx.stop()
-        self.audio_rx.stop()
-        if self.discovery:
-            self.discovery.stop()
+        self.stream.disconnect()
+        self.adb_watcher.stop()
         if self.recorder:
             self.recorder.close()
 
-    def _on_audio_connect(self):
+    def _on_device_connected(self, serial: str):
+        print(f"[GlassesServer] device connected: {serial}")
         if self.recorder:
             self.recorder.start_session()
-        if not self._audio_connected_once:
-            self._audio_connected_once = True
-            print("[GlassesServer] audio connected")
-            return
-        print("[GlassesServer] audio reconnected — resetting pairing loop")
-        self.pairing.reset()
+        if self._connected_once:
+            print("[GlassesServer] reconnected — resetting pairing loop")
+            self.pairing.reset()
+        self._connected_once = True
+        self.stream.connect(serial)
+
+    def _on_device_disconnected(self, serial: str):
+        print(f"[GlassesServer] device disconnected: {serial}")
+        self.stream.disconnect()

@@ -119,7 +119,7 @@ class SanitizedConversation:
 _groq = Groq()
 
 
-def _pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
+def pcm_to_wav(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
     pcm16 = (samples * 32767).clip(-32768, 32767).astype(np.int16)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
@@ -148,7 +148,7 @@ def _transcribe(wav_bytes: bytes) -> str:
 
 def sanitize(buffer: list[ChunkData]) -> SanitizedConversation:
     all_audio = np.concatenate([chunk.audio for chunk in buffer])
-    wav_bytes = _pcm_to_wav(all_audio)
+    wav_bytes = pcm_to_wav(all_audio)
     transcript = _transcribe(wav_bytes)
 
     counts: Counter[tuple[int | None, str]] = Counter()
