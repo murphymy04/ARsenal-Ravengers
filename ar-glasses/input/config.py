@@ -12,9 +12,9 @@ CAMERA_HEIGHT = 2048
 CAMERA_FPS = 30  # this is the actual framerate i am getting on my mac
 ANDROID_CAMERA_FPS = 30  # Android camera streaming target fps
 
-# Glasses USB stream resolution (scrcpy → FFmpeg output size)
-GLASSES_VIDEO_WIDTH = 1280
-GLASSES_VIDEO_HEIGHT = 720
+# Glasses USB stream resolution (scrcpy → FFmpeg output size, post-rotation)
+GLASSES_VIDEO_WIDTH = 720
+GLASSES_VIDEO_HEIGHT = 1280
 
 
 # Microphone
