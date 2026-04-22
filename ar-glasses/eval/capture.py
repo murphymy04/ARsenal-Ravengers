@@ -51,7 +51,9 @@ def capture(name: str, output_dir: Path, target_count: int, camera_source: int):
     flash = 0  # frames remaining to show capture flash
 
     print(f"\nCapturing dataset for '{name}' → {output_dir}")
-    print(f"Press [c] or [SPACE] to capture | [q] to quit | target: {target_count} images\n")
+    print(
+        f"Press [c] or [SPACE] to capture | [q] to quit | target: {target_count} images\n"
+    )
 
     while True:
         ret, frame = cap.read()
@@ -67,20 +69,36 @@ def capture(name: str, output_dir: Path, target_count: int, camera_source: int):
             color = (0, 255, 0) if face.blur_score >= 60 else (0, 165, 255)
             cv2.rectangle(preview, (b.x1, b.y1), (b.x2, b.y2), color, 2)
             cv2.putText(
-                preview, f"blur={face.blur_score:.0f}",
-                (b.x1, b.y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1,
+                preview,
+                f"blur={face.blur_score:.0f}",
+                (b.x1, b.y1 - 6),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                color,
+                1,
             )
 
         # Capture flash overlay
         if flash > 0:
-            cv2.rectangle(preview, (0, 0), (preview.shape[1], preview.shape[0]), (255, 255, 255), 8)
+            cv2.rectangle(
+                preview,
+                (0, 0),
+                (preview.shape[1], preview.shape[0]),
+                (255, 255, 255),
+                8,
+            )
             flash -= 1
 
         # Status bar
         status = f"  '{name}'  saved: {saved}/{target_count}  faces: {len(faces)}"
         cv2.putText(
-            preview, status,
-            (10, preview.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2,
+            preview,
+            status,
+            (10, preview.shape[0] - 12),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 255, 0),
+            2,
         )
         cv2.imshow("Capture", preview)
 
@@ -109,17 +127,24 @@ def capture(name: str, output_dir: Path, target_count: int, camera_source: int):
 
 def main():
     parser = argparse.ArgumentParser(description="Capture evaluation dataset images.")
-    parser.add_argument("--name", required=True, help="Person's name (used as folder name).")
     parser.add_argument(
-        "--output", default="eval/dataset",
+        "--name", required=True, help="Person's name (used as folder name)."
+    )
+    parser.add_argument(
+        "--output",
+        default="eval/dataset",
         help="Root dataset directory (default: eval/dataset).",
     )
     parser.add_argument(
-        "--count", type=int, default=20,
+        "--count",
+        type=int,
+        default=20,
         help="Number of images to capture (default: 20).",
     )
     parser.add_argument(
-        "--camera", type=int, default=CAMERA_SOURCE,
+        "--camera",
+        type=int,
+        default=CAMERA_SOURCE,
         help="Camera index (default: 0).",
     )
     args = parser.parse_args()

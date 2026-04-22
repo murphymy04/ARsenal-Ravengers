@@ -10,4 +10,3 @@ if STORAGE_BACKEND == "supabase":
     from storage.supabase_database import SupabaseDatabase as Database  # noqa: F401
 else:
     from storage.sqlite_database import SQLiteDatabase as Database  # noqa: F401
-

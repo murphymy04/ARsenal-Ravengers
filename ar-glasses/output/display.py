@@ -10,8 +10,11 @@ from typing import List
 
 from models import DetectedFace, IdentityMatch
 from config import (
-    BBOX_COLOR, UNKNOWN_BBOX_COLOR, TEXT_COLOR,
-    FONT_SCALE, FONT_THICKNESS,
+    BBOX_COLOR,
+    UNKNOWN_BBOX_COLOR,
+    TEXT_COLOR,
+    FONT_SCALE,
+    FONT_THICKNESS,
 )
 
 _SPEAKING_COLOR = (0, 220, 255)  # yellow-ish — distinct from green/red bbox colors
@@ -50,7 +53,8 @@ class Display:
                     frame,
                     (bbox.x1 - 3, bbox.y1 - 3),
                     (bbox.x2 + 3, bbox.y2 + 3),
-                    _SPEAKING_COLOR, 2,
+                    _SPEAKING_COLOR,
+                    2,
                 )
 
             # Label: "Name (0.85)" or "Unknown", with speaking dot prefix
@@ -69,13 +73,17 @@ class Display:
                 frame,
                 (bbox.x1, bbox.y1 - th - 10),
                 (bbox.x1 + tw + 4, bbox.y1),
-                color, -1,
+                color,
+                -1,
             )
             cv2.putText(
-                frame, label,
+                frame,
+                label,
                 (bbox.x1 + 2, bbox.y1 - 5),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                FONT_SCALE, TEXT_COLOR, FONT_THICKNESS,
+                FONT_SCALE,
+                TEXT_COLOR,
+                FONT_THICKNESS,
             )
 
             # Speaking indicator dot in the top-right corner of the bbox

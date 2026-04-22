@@ -51,3 +51,11 @@ ar-glasses/logs/
 egocom
 download_egocom.sh
 ar-glasses/test_videos/mmcsg/
+
+# Unity sub-repos (managed by Unity VCS)
+ARgusEye-glasses-app-v2/
+ARgusEye-glasses-app-v2-2026-04-19-18-54-09/
+
+# Claude Code
+**/.claude/scheduled_tasks.lock
+**/.claude/worktrees/

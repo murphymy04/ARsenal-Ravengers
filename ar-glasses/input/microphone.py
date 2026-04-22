@@ -76,10 +76,18 @@ class Microphone:
 class SimulatedMic:
     """Feeds pre-extracted audio at video frame rate for offline testing."""
 
-    def __init__(self, audio: np.ndarray, fps: float, sample_rate: int = SAMPLE_RATE, gain: float = 1.0, denoise: bool = False):
+    def __init__(
+        self,
+        audio: np.ndarray,
+        fps: float,
+        sample_rate: int = SAMPLE_RATE,
+        gain: float = 1.0,
+        denoise: bool = False,
+    ):
         self.sample_rate = sample_rate
         if denoise:
             import noisereduce as nr
+
             audio = nr.reduce_noise(y=audio, sr=sample_rate)
         self.audio = np.clip(audio * gain, -1.0, 1.0) if gain != 1.0 else audio
         self.samples_per_frame = sample_rate / fps

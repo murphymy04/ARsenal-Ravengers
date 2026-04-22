@@ -49,6 +49,7 @@ from processing.face_matcher import FaceMatcher
 # Dataset loading
 # ---------------------------------------------------------------------------
 
+
 def load_dataset(dataset_dir: Path) -> dict[str, list[Path]]:
     """Return {person_name: [sorted image paths]} for each sub-folder."""
     dataset = {}
@@ -64,6 +65,7 @@ def load_dataset(dataset_dir: Path) -> dict[str, list[Path]]:
 # ---------------------------------------------------------------------------
 # Pipeline helpers
 # ---------------------------------------------------------------------------
+
 
 def embed_images(
     paths: list[Path],
@@ -103,7 +105,10 @@ def build_gallery(
 # Metrics
 # ---------------------------------------------------------------------------
 
-def compute_eer(genuine_scores: np.ndarray, impostor_scores: np.ndarray) -> tuple[float, float]:
+
+def compute_eer(
+    genuine_scores: np.ndarray, impostor_scores: np.ndarray
+) -> tuple[float, float]:
     """Return (EER, EER_threshold) where FAR ≈ FRR."""
     all_scores = np.concatenate([genuine_scores, impostor_scores])
     thresholds = np.unique(all_scores)
@@ -135,12 +140,13 @@ def score_against_all(
         return {name: 0.0 for name in gallery_means}
     q_norm = q / qn
     return {
-        name: float(np.dot(q_norm, mean_n))
-        for name, mean_n in gallery_means.items()
+        name: float(np.dot(q_norm, mean_n)) for name, mean_n in gallery_means.items()
     }
 
 
-def compute_gallery_means(enrollment: dict[str, list[FaceEmbedding]]) -> dict[str, np.ndarray]:
+def compute_gallery_means(
+    enrollment: dict[str, list[FaceEmbedding]],
+) -> dict[str, np.ndarray]:
     """Pre-compute normalised mean embedding for each enrolled person."""
     means = {}
     for name, embs in enrollment.items():
@@ -155,6 +161,7 @@ def compute_gallery_means(enrollment: dict[str, list[FaceEmbedding]]) -> dict[st
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
+
 
 def _bar(value: float, width: int = 30) -> str:
     filled = int(round(value * width))
@@ -181,7 +188,11 @@ def print_report(
     frr = rejected / total if total else 0.0
 
     # --- FAR: highest impostor score exceeds threshold ---
-    far = float(np.mean(impostor_scores >= threshold)) if len(impostor_scores) else float("nan")
+    far = (
+        float(np.mean(impostor_scores >= threshold))
+        if len(impostor_scores)
+        else float("nan")
+    )
 
     # --- EER ---
     if len(genuine_scores) and len(impostor_scores):
@@ -198,7 +209,7 @@ def print_report(
 
     # --- Confidence stats ---
     correct_confs = [r["confidence"] for r in results if r["pred"] == r["true"]]
-    wrong_confs   = [r["confidence"] for r in results if r["pred"] != r["true"]]
+    wrong_confs = [r["confidence"] for r in results if r["pred"] != r["true"]]
 
     # -----------------------------------------------------------------------
     W = 60
@@ -212,32 +223,42 @@ def print_report(
     print()
 
     print("  ── Core Metrics ─────────────────────────────")
-    print(f"  Rank-1 Accuracy   : {rank1*100:5.1f}%  {_bar(rank1)}")
-    print(f"  False Reject Rate : {frr*100:5.1f}%  {_bar(frr)}")
-    print(f"  False Accept Rate : {far*100:5.1f}%  {_bar(far)}")
-    print(f"  Equal Error Rate  : {eer*100:5.1f}%  (threshold ≈ {eer_threshold:.2f})")
+    print(f"  Rank-1 Accuracy   : {rank1 * 100:5.1f}%  {_bar(rank1)}")
+    print(f"  False Reject Rate : {frr * 100:5.1f}%  {_bar(frr)}")
+    print(f"  False Accept Rate : {far * 100:5.1f}%  {_bar(far)}")
+    print(f"  Equal Error Rate  : {eer * 100:5.1f}%  (threshold ≈ {eer_threshold:.2f})")
     print()
 
     print("  ── Per-Person Accuracy ──────────────────────")
     for name, stats in sorted(per_person.items()):
         acc = stats["correct"] / stats["total"] if stats["total"] else 0.0
-        print(f"  {name:<18} {acc*100:5.1f}%  ({stats['correct']}/{stats['total']})  {_bar(acc, 20)}")
+        print(
+            f"  {name:<18} {acc * 100:5.1f}%  ({stats['correct']}/{stats['total']})  {_bar(acc, 20)}"
+        )
     print()
 
     print("  ── Confidence Distributions ─────────────────")
     if correct_confs:
-        print(f"  Correct matches   : mean={np.mean(correct_confs):.3f}  "
-              f"min={np.min(correct_confs):.3f}  max={np.max(correct_confs):.3f}")
+        print(
+            f"  Correct matches   : mean={np.mean(correct_confs):.3f}  "
+            f"min={np.min(correct_confs):.3f}  max={np.max(correct_confs):.3f}"
+        )
     if wrong_confs:
-        print(f"  Wrong   matches   : mean={np.mean(wrong_confs):.3f}  "
-              f"min={np.min(wrong_confs):.3f}  max={np.max(wrong_confs):.3f}")
+        print(
+            f"  Wrong   matches   : mean={np.mean(wrong_confs):.3f}  "
+            f"min={np.min(wrong_confs):.3f}  max={np.max(wrong_confs):.3f}"
+        )
     print()
 
     print("  ── Score Distributions ──────────────────────")
     if len(genuine_scores):
-        print(f"  Genuine  scores   : mean={genuine_scores.mean():.3f}  std={genuine_scores.std():.3f}")
+        print(
+            f"  Genuine  scores   : mean={genuine_scores.mean():.3f}  std={genuine_scores.std():.3f}"
+        )
     if len(impostor_scores):
-        print(f"  Impostor scores   : mean={impostor_scores.mean():.3f}  std={impostor_scores.std():.3f}")
+        print(
+            f"  Impostor scores   : mean={impostor_scores.mean():.3f}  std={impostor_scores.std():.3f}"
+        )
     print()
 
     # Confusion matrix (only for small galleries)
@@ -292,7 +313,9 @@ def _try_plot_roc(genuine: np.ndarray, impostor: np.ndarray, threshold: float):
     # Mark current operating point
     op_far = float(np.mean(impostor >= threshold))
     op_tar = float(np.mean(genuine >= threshold))
-    ax.scatter([op_far], [op_tar], color="red", zorder=5, label=f"threshold={threshold:.2f}")
+    ax.scatter(
+        [op_far], [op_tar], color="red", zorder=5, label=f"threshold={threshold:.2f}"
+    )
     ax.set_xlabel("False Accept Rate (FAR)")
     ax.set_ylabel("True Accept Rate (TAR = 1 - FRR)")
     ax.set_title("ROC Curve")
@@ -307,6 +330,7 @@ def _try_plot_roc(genuine: np.ndarray, impostor: np.ndarray, threshold: float):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def evaluate(dataset_dir: Path, enroll_count: int, threshold: float):
     dataset = load_dataset(dataset_dir)
@@ -325,7 +349,7 @@ def evaluate(dataset_dir: Path, enroll_count: int, threshold: float):
     print("Loading face detector and embedder…")
     detector = FaceDetector()
     embedder = FaceEmbedder()
-    matcher  = FaceMatcher(threshold=threshold)
+    matcher = FaceMatcher(threshold=threshold)
 
     # --- Embed all images ---
     print("Embedding all images…")
@@ -339,7 +363,7 @@ def evaluate(dataset_dir: Path, enroll_count: int, threshold: float):
 
     # --- Split: enrollment / query ---
     enrollment: dict[str, list[FaceEmbedding]] = {}
-    queries:    list[tuple[str, Path, FaceEmbedding]] = []  # (true_name, path, embedding)
+    queries: list[tuple[str, Path, FaceEmbedding]] = []  # (true_name, path, embedding)
     n_no_detection = 0
 
     for name, emb_list in all_embeddings.items():
@@ -359,7 +383,9 @@ def evaluate(dataset_dir: Path, enroll_count: int, threshold: float):
             queries.append((name, path, emb))
 
     if not queries:
-        print("No query images remaining after enrollment split. Capture more images or reduce --enroll.")
+        print(
+            "No query images remaining after enrollment split. Capture more images or reduce --enroll."
+        )
         detector.close()
         return
 
@@ -372,16 +398,18 @@ def evaluate(dataset_dir: Path, enroll_count: int, threshold: float):
 
     # --- Run queries ---
     results = []
-    genuine_scores  = []
+    genuine_scores = []
     impostor_scores = []
 
     for true_name, path, query_emb in queries:
         match = matcher.match(query_emb)
-        results.append({
-            "true": true_name,
-            "pred": match.name,
-            "confidence": match.confidence,
-        })
+        results.append(
+            {
+                "true": true_name,
+                "pred": match.name,
+                "confidence": match.confidence,
+            }
+        )
 
         # Collect genuine and impostor scores for EER / ROC
         all_scores = score_against_all(query_emb, gallery_means)
@@ -391,12 +419,14 @@ def evaluate(dataset_dir: Path, enroll_count: int, threshold: float):
             else:
                 impostor_scores.append(score)
 
-    genuine_arr  = np.array(genuine_scores,  dtype=np.float32)
+    genuine_arr = np.array(genuine_scores, dtype=np.float32)
     impostor_arr = np.array(impostor_scores, dtype=np.float32)
 
     detector.close()
 
-    print_report(results, genuine_arr, impostor_arr, threshold, len(enrollment), n_no_detection)
+    print_report(
+        results, genuine_arr, impostor_arr, threshold, len(enrollment), n_no_detection
+    )
 
 
 def main():
@@ -404,15 +434,20 @@ def main():
 
     parser = argparse.ArgumentParser(description="Evaluate face recognition accuracy.")
     parser.add_argument(
-        "--dataset", default="eval/dataset",
+        "--dataset",
+        default="eval/dataset",
         help="Path to dataset directory (default: eval/dataset).",
     )
     parser.add_argument(
-        "--enroll", type=int, default=5,
+        "--enroll",
+        type=int,
+        default=5,
         help="Images per person used for enrollment (default: 5). Rest become queries.",
     )
     parser.add_argument(
-        "--threshold", type=float, default=MATCH_THRESHOLD,
+        "--threshold",
+        type=float,
+        default=MATCH_THRESHOLD,
         help=f"Cosine similarity threshold (default: {MATCH_THRESHOLD}).",
     )
     args = parser.parse_args()

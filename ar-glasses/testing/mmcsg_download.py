@@ -75,7 +75,9 @@ def download_recordings(recording_ids):
         total_bytes = sum(
             z.getinfo(f).file_size for rid in recording_ids for f in groups[rid]
         )
-        print(f"Downloading {len(recording_ids)} recordings ({format_size(total_bytes)})")
+        print(
+            f"Downloading {len(recording_ids)} recordings ({format_size(total_bytes)})"
+        )
 
         for rid in recording_ids:
             for member in groups[rid]:
@@ -88,8 +90,12 @@ def download_recordings(recording_ids):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--list", action="store_true", help="List recording ids and sizes")
-    parser.add_argument("--count", type=int, help="Download first N recordings alphabetically")
+    parser.add_argument(
+        "--list", action="store_true", help="List recording ids and sizes"
+    )
+    parser.add_argument(
+        "--count", type=int, help="Download first N recordings alphabetically"
+    )
     parser.add_argument("--ids", nargs="+", help="Download specific recording ids")
     args = parser.parse_args()
 

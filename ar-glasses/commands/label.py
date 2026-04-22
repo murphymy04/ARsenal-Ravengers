@@ -20,8 +20,12 @@ def label_mode(db: Database):
     print("Commands: type a name to label, press Enter to skip, 'delete' to remove.\n")
 
     for person in unlabeled:
-        last_seen = person.last_seen.strftime("%Y-%m-%d %H:%M") if person.last_seen else "never"
-        print(f"Cluster '{person.name}' | {len(person.embeddings)} embedding(s) | last seen: {last_seen}")
+        last_seen = (
+            person.last_seen.strftime("%Y-%m-%d %H:%M") if person.last_seen else "never"
+        )
+        print(
+            f"Cluster '{person.name}' | {len(person.embeddings)} embedding(s) | last seen: {last_seen}"
+        )
         print("  Type name + Enter | Esc to skip | type 'delete' + Enter to remove")
 
         if person.thumbnail is not None:
@@ -57,21 +61,25 @@ def _cv2_input(image: np.ndarray, prompt: str) -> str:
     while True:
         display = image.copy()
         cv2.putText(
-            display, f"{prompt}: {typed}_",
+            display,
+            f"{prompt}: {typed}_",
             (10, display.shape[0] - 15),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2,
         )
         cv2.imshow(win, display)
         key = cv2.waitKey(20) & 0xFF
 
-        if key == 13:                    # Enter — confirm
+        if key == 13:  # Enter — confirm
             break
-        elif key == 27:                  # Esc — skip
+        elif key == 27:  # Esc — skip
             typed = ""
             break
-        elif key in (8, 127):            # Backspace
+        elif key in (8, 127):  # Backspace
             typed = typed[:-1]
-        elif 32 <= key < 127:            # Printable ASCII
+        elif 32 <= key < 127:  # Printable ASCII
             typed += chr(key)
 
     cv2.destroyWindow(win)

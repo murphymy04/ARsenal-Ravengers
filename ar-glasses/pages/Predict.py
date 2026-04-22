@@ -24,6 +24,7 @@ from storage.database import Database
 # Shared pipeline state (mirrors demo.py pattern)
 # ---------------------------------------------------------------------------
 
+
 class _PredictState:
     def __init__(self):
         self._lock = threading.Lock()
@@ -43,7 +44,11 @@ class _PredictState:
 
     def snapshot(self):
         with self._lock:
-            ann = self.annotated_frame.copy() if self.annotated_frame is not None else None
+            ann = (
+                self.annotated_frame.copy()
+                if self.annotated_frame is not None
+                else None
+            )
             return ann, list(self.face_predictions), self.fps
 
 
@@ -51,7 +56,10 @@ class _PredictState:
 # Annotation helper
 # ---------------------------------------------------------------------------
 
-def _draw_predictions(frame: np.ndarray, faces, candidates_per_face: list) -> np.ndarray:
+
+def _draw_predictions(
+    frame: np.ndarray, faces, candidates_per_face: list
+) -> np.ndarray:
     out = frame.copy()
     for face, candidates in zip(faces, candidates_per_face):
         b = face.bbox
@@ -75,8 +83,13 @@ def _draw_predictions(frame: np.ndarray, faces, candidates_per_face: list) -> np
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
         cv2.rectangle(out, (b.x1, b.y1 - th - 12), (b.x1 + tw + 8, b.y1), color, -1)
         cv2.putText(
-            out, label, (b.x1 + 4, b.y1 - 6),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2,
+            out,
+            label,
+            (b.x1 + 4, b.y1 - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
         )
     return out
 
@@ -84,6 +97,7 @@ def _draw_predictions(frame: np.ndarray, faces, candidates_per_face: list) -> np
 # ---------------------------------------------------------------------------
 # Background pipeline thread
 # ---------------------------------------------------------------------------
+
 
 def _pipeline_thread(state: _PredictState):
     try:
@@ -125,7 +139,9 @@ def _pipeline_thread(state: _PredictState):
 
             predictions = [
                 {
-                    "name": c[0][0].name if c and c[0][1] >= MATCH_THRESHOLD else "Unknown",
+                    "name": c[0][0].name
+                    if c and c[0][1] >= MATCH_THRESHOLD
+                    else "Unknown",
                     "score": round(c[0][1], 3) if c else 0.0,
                     "margin": round(c[0][1] - c[1][1], 3) if len(c) > 1 else 0.0,
                     "candidates": [(p.name, round(s, 3)) for p, s in c[:3]],
@@ -149,13 +165,18 @@ def _pipeline_thread(state: _PredictState):
 # Session state helpers
 # ---------------------------------------------------------------------------
 
+
 def _ensure_pipeline_running():
     def _state_valid(s) -> bool:
         return isinstance(s, _PredictState) and hasattr(s, "face_predictions")
 
-    if "predict_state" not in st.session_state or not _state_valid(st.session_state["predict_state"]):
+    if "predict_state" not in st.session_state or not _state_valid(
+        st.session_state["predict_state"]
+    ):
         predict_state = _PredictState()
-        thread = threading.Thread(target=_pipeline_thread, args=(predict_state,), daemon=True)
+        thread = threading.Thread(
+            target=_pipeline_thread, args=(predict_state,), daemon=True
+        )
         thread.start()
         st.session_state["predict_state"] = predict_state
         st.session_state["predict_thread"] = thread
@@ -164,6 +185,7 @@ def _ensure_pipeline_running():
 # ---------------------------------------------------------------------------
 # Resize helper (mirrors demo.py)
 # ---------------------------------------------------------------------------
+
 
 def _resize(img: np.ndarray, width: int = 640, max_height: int = 840) -> np.ndarray:
     h, w = img.shape[:2]
@@ -220,10 +242,14 @@ while True:
                         st.success(f"**{pred['name']}**")
                     else:
                         st.warning("**Unknown**")
-                    st.caption(f"score: `{pred['score']:.3f}`  margin: `{pred['margin']:.3f}`")
+                    st.caption(
+                        f"score: `{pred['score']:.3f}`  margin: `{pred['margin']:.3f}`"
+                    )
                     for rank, (name, score) in enumerate(pred["candidates"], 1):
                         above = score >= MATCH_THRESHOLD
-                        st.write(f"{'🟢' if above else '🔴'} #{rank} {name} `{score:.3f}`")
+                        st.write(
+                            f"{'🟢' if above else '🔴'} #{rank} {name} `{score:.3f}`"
+                        )
                         st.progress(float(np.clip(score, 0.0, 1.0)))
         else:
             st.caption("No faces in frame")

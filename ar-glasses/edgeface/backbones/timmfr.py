@@ -5,17 +5,16 @@ Institution: Idiap Research Institute, Martigny, Switzerland.
 
 Copyright (C) 2023 Anjith George
 
-This software is distributed under the terms described in the LICENSE file 
-located in the parent directory of this source code repository. 
+This software is distributed under the terms described in the LICENSE file
+located in the parent directory of this source code repository.
 
 For inquiries, please contact the author at anjith.george@idiap.ch
 ===============================================================================
 """
 
-
-
 import timm
 import torch.nn as nn
+
 
 class LoRaLin(nn.Module):
     def __init__(self, in_features, out_features, rank, bias=True):
@@ -31,36 +30,38 @@ class LoRaLin(nn.Module):
         x = self.linear2(x)
         return x
 
+
 def replace_linear_with_lowrank_recursive_2(model, rank_ratio=0.2):
     for name, module in model.named_children():
-        if isinstance(module, nn.Linear) and 'head' not in name:
+        if isinstance(module, nn.Linear) and "head" not in name:
             in_features = module.in_features
             out_features = module.out_features
-            rank = max(2,int(min(in_features, out_features) * rank_ratio))
-            bias=False
+            rank = max(2, int(min(in_features, out_features) * rank_ratio))
+            bias = False
             if module.bias is not None:
-                bias=True
+                bias = True
             lowrank_module = LoRaLin(in_features, out_features, rank, bias)
 
             setattr(model, name, lowrank_module)
         else:
             replace_linear_with_lowrank_recursive_2(module, rank_ratio)
 
+
 def replace_linear_with_lowrank_2(model, rank_ratio=0.2):
     replace_linear_with_lowrank_recursive_2(model, rank_ratio)
     return model
 
 
-        
 class TimmFRWrapperV2(nn.Module):
     """
     Wraps timm model
     """
-    def __init__(self, model_name='edgenext_x_small', featdim=512, batchnorm=False):
+
+    def __init__(self, model_name="edgenext_x_small", featdim=512, batchnorm=False):
         super().__init__()
         self.featdim = featdim
         self.model_name = model_name
-        
+
         self.model = timm.create_model(self.model_name)
         self.model.reset_classifier(self.featdim)
 

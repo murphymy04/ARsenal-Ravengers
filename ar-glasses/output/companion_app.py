@@ -10,7 +10,6 @@ Stubbed for Phase 2 implementation.
 """
 
 
-
 class CompanionApp:
     """Flask-based companion web application (stub - Phase 2)."""
 

@@ -11,13 +11,21 @@ import asyncio
 import json
 import queue
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodicNode
 from groq import Groq
+from models import IdentityMatch
 
-from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, RETRIEVAL_COOLDOWN_SECONDS
+from config import (
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
+    RETRIEVAL_COOLDOWN_SECONDS,
+    RETRIEVAL_MIN_TRACK_FRAMES,
+)
 
 FORMATTER_MODEL = "qwen/qwen3-32b"
 
@@ -47,6 +55,65 @@ FORMATTER_RESPONSE_FORMAT = {"type": "json_object"}
 
 
 _groq = Groq()
+
+
+class RetrievalDispatcher:
+    """Per-track gating between vision and the retrieval worker.
+
+    Waits MIN_TRACK_FRAMES of continuous sightings before firing, then
+    uses per-track cooldown so the same tid can re-fire after
+    RETRIEVAL_COOLDOWN_SECONDS. Dead tracks are evicted every dispatch
+    via the active_set filter, so unknown faces don't need a separate
+    frame-count ceiling.
+    """
+
+    def __init__(
+        self,
+        enqueue: Callable[[tuple], None],
+        min_track_frames: int = RETRIEVAL_MIN_TRACK_FRAMES,
+        cooldown_seconds: float = RETRIEVAL_COOLDOWN_SECONDS,
+    ):
+        self._enqueue = enqueue
+        self._min_track_frames = min_track_frames
+        self._cooldown_seconds = cooldown_seconds
+        self._frames_seen: dict[int, int] = {}
+        self._last_queued_ts: dict[int, float] = {}
+
+    def dispatch(
+        self,
+        smoothed: list[IdentityMatch],
+        track_ids: list[int],
+        new_track_ids: set[int],
+        timestamp: float,
+    ):
+        for tid in new_track_ids:
+            self._frames_seen[tid] = 0
+
+        active_set = set(track_ids)
+        self._frames_seen = {
+            tid: n for tid, n in self._frames_seen.items() if tid in active_set
+        }
+        self._last_queued_ts = {
+            tid: t for tid, t in self._last_queued_ts.items() if tid in active_set
+        }
+
+        for tid in list(self._frames_seen):
+            self._frames_seen[tid] += 1
+            if self._frames_seen[tid] < self._min_track_frames:
+                continue
+            match = smoothed[track_ids.index(tid)]
+            if not match.is_known:
+                continue
+            last = self._last_queued_ts.get(tid)
+            if last is not None and timestamp - last < self._cooldown_seconds:
+                continue
+            self._enqueue((tid, match, timestamp))
+            self._last_queued_ts[tid] = timestamp
+            print(f"[retrieval] QUEUED {match.name} (track={tid}, t={timestamp:.1f}s)")
+
+    def reset(self):
+        self._frames_seen.clear()
+        self._last_queued_ts.clear()
 
 
 def _humanize_delta(past: datetime, now: datetime) -> str:

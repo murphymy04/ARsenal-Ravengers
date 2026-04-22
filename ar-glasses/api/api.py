@@ -109,7 +109,9 @@ class PeopleAPI:
                 if p.thumbnail is not None:
                     try:
                         _, buffer = cv2.imencode(".jpg", p.thumbnail)
-                        thumbnail_b64 = base64.b64encode(buffer.tobytes()).decode("utf-8")
+                        thumbnail_b64 = base64.b64encode(buffer.tobytes()).decode(
+                            "utf-8"
+                        )
                     except Exception as e:
                         print(f"Error encoding thumbnail for person {p.person_id}: {e}")
 
@@ -149,7 +151,9 @@ class PeopleAPI:
                 if p.thumbnail is not None:
                     try:
                         _, buffer = cv2.imencode(".jpg", p.thumbnail)
-                        thumbnail_b64 = base64.b64encode(buffer.tobytes()).decode("utf-8")
+                        thumbnail_b64 = base64.b64encode(buffer.tobytes()).decode(
+                            "utf-8"
+                        )
                     except Exception as e:
                         print(f"Error encoding thumbnail for person {p.person_id}: {e}")
 
@@ -320,11 +324,13 @@ class PeopleAPI:
         # =================================================================
 
         @self.app.get(
-            "/api/interactions", response_model=list[InteractionResponse], tags=["interactions"]
+            "/api/interactions",
+            response_model=list[InteractionResponse],
+            tags=["interactions"],
         )
         def get_all_interactions():
             """Get all interactions from all people.
-            
+
             Maps interaction person_ids to primary person_id for each name
             so the frontend can associate interactions with the correct person entity.
             """
@@ -340,7 +346,9 @@ class PeopleAPI:
             return [
                 InteractionResponse(
                     interaction_id=r[0],
-                    person_id=person_id_mapping.get(r[1], r[1]),  # Map to primary person_id
+                    person_id=person_id_mapping.get(
+                        r[1], r[1]
+                    ),  # Map to primary person_id
                     timestamp=r[2],
                     transcript=r[3],
                     context=r[4],
@@ -356,7 +364,7 @@ class PeopleAPI:
         )
         def get_labeled_interactions():
             """Get all interactions from labeled people only.
-            
+
             Maps interaction person_ids to primary person_id for each name
             so the frontend can associate interactions with the correct person entity.
             """
@@ -373,7 +381,9 @@ class PeopleAPI:
             return [
                 InteractionResponse(
                     interaction_id=r[0],
-                    person_id=person_id_mapping.get(r[1], r[1]),  # Map to primary person_id
+                    person_id=person_id_mapping.get(
+                        r[1], r[1]
+                    ),  # Map to primary person_id
                     timestamp=r[2],
                     transcript=r[3],
                     context=r[4],
@@ -448,10 +458,10 @@ class PeopleAPI:
 
     def _normalize_name(self, name: str) -> str:
         """Normalize name for duplicate comparison: lowercase and collapse whitespace.
-        
+
         Args:
             name: The name to normalize
-            
+
         Returns:
             Normalized name (lowercase, single spaces)
         """
@@ -485,10 +495,10 @@ class PeopleAPI:
 
     def _update_interaction_speaker_names(self, person_id: int, new_name: str) -> None:
         """Update interaction transcripts to use the newly labeled person's name.
-        
+
         Replaces non-Wearer speaker names with the new_name in all interactions
         for the given person_id.
-        
+
         Args:
             person_id: The person whose interactions to update
             new_name: The new name to use for the person in transcripts
@@ -519,11 +529,11 @@ class PeopleAPI:
 
     def _transcript_to_segments(self, transcript: str, person_name: str) -> list[dict]:
         """Convert interaction transcript to segments format for Zep.
-        
+
         Args:
             transcript: The interaction transcript (speaker: text format)
             person_name: The labeled person name
-            
+
         Returns:
             List of segments with speaker and text keys
         """
@@ -535,17 +545,16 @@ class PeopleAPI:
         for line in lines:
             if ": " in line:
                 speaker, text = line.split(": ", 1)
-                segments.append({
-                    "speaker": speaker,
-                    "text": text
-                })
+                segments.append({"speaker": speaker, "text": text})
         return segments
 
-    def _flush_person_interactions_to_zep(self, person_id: int, person_name: str) -> None:
+    def _flush_person_interactions_to_zep(
+        self, person_id: int, person_name: str
+    ) -> None:
         """Flush all interactions for a labeled person to Zep (knowledge graph).
-        
+
         Converts interaction transcripts to segments and sends to Zep using save_to_memory.
-        
+
         Args:
             person_id: The person whose interactions to flush
             person_name: The labeled person name
@@ -569,7 +578,9 @@ class PeopleAPI:
 
         if all_segments:
             save_to_memory(all_segments)
-            print(f"  [knowledge] flushed {len(all_segments)} segments to Zep for {person_name}")
+            print(
+                f"  [knowledge] flushed {len(all_segments)} segments to Zep for {person_name}"
+            )
 
     def run(
         self,

@@ -9,6 +9,7 @@ from datetime import datetime
 @dataclass
 class BoundingBox:
     """Face bounding box in pixel coordinates."""
+
     x1: int
     y1: int
     x2: int
@@ -31,24 +32,27 @@ class BoundingBox:
 @dataclass
 class DetectedFace:
     """A detected face with its cropped image."""
+
     bbox: BoundingBox
-    crop: np.ndarray        # 112x112 RGB uint8
+    crop: np.ndarray  # 112x112 RGB uint8
     frame_index: int
     timestamp: float
-    blur_score: float = 0.0   # Laplacian variance — higher is sharper
+    blur_score: float = 0.0  # Laplacian variance — higher is sharper
     is_speaking: bool = False  # True when jawOpen blendshape exceeds threshold
 
 
 @dataclass
 class FaceEmbedding:
     """512-dimensional face embedding vector."""
-    vector: np.ndarray      # shape (512,), float32
+
+    vector: np.ndarray  # shape (512,), float32
     model_name: str
 
 
 @dataclass
 class IdentityMatch:
     """Result of matching a face embedding against known people."""
+
     person_id: Optional[int]
     name: str
     confidence: float
@@ -58,12 +62,13 @@ class IdentityMatch:
 @dataclass
 class Person:
     """A known person stored in the database."""
+
     person_id: int
     name: str
     embeddings: List[FaceEmbedding] = field(default_factory=list)
     thumbnail: Optional[np.ndarray] = None  # BGR image
     notes: str = ""
-    is_labeled: bool = True   # False = auto-discovered cluster awaiting a real name
+    is_labeled: bool = True  # False = auto-discovered cluster awaiting a real name
     created_at: Optional[datetime] = None
     last_seen: Optional[datetime] = None
 
@@ -71,15 +76,19 @@ class Person:
 @runtime_checkable
 class IdentityModule(Protocol):
     """Pluggable identity backend for the diarization pipeline."""
+
     def identify(self, face: "DetectedFace", frame_count: int) -> "IdentityMatch": ...
 
 
 @runtime_checkable
 class SpeakingModule(Protocol):
     """Pluggable speaker detection backend."""
+
     def drip_audio(self, samples: np.ndarray) -> None: ...
     def add_crop(self, track_id: int, crop_rgb: np.ndarray) -> None: ...
-    def run_inference(self, frame_count: int, active_track_ids: set | None = None) -> None: ...
+    def run_inference(
+        self, frame_count: int, active_track_ids: set | None = None
+    ) -> None: ...
     def get_speaking(self, track_id: int) -> bool: ...
     def evict_track(self, track_id: int) -> None: ...
     def close(self) -> None: ...
@@ -88,6 +97,7 @@ class SpeakingModule(Protocol):
 @dataclass
 class TranscriptSegment:
     """A segment of transcribed speech."""
+
     text: str
     start_time: float
     end_time: float

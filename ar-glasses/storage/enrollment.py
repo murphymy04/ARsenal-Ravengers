@@ -72,7 +72,9 @@ class Enrollment:
             if best_face is None or face.blur_score > best_face.blur_score:
                 best_face = face
 
-        thumbnail = cv2.cvtColor(best_face.crop, cv2.COLOR_RGB2BGR) if best_face else None
+        thumbnail = (
+            cv2.cvtColor(best_face.crop, cv2.COLOR_RGB2BGR) if best_face else None
+        )
 
         if not embeddings:
             return None
