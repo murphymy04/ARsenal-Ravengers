@@ -178,12 +178,12 @@ class LivePipelineDriver:
 
             if self._hud_server:
                 print(f"  [hud] publishing person_context for {person_name}")
-                hud_context =  {
-                        "type": "person_context",
-                        "name": person_name,
-                        "person_id": person_id,
-                        "context": context,
-                    }
+                hud_context = {
+                    "type": "person_context",
+                    "name": person_name,
+                    "person_id": person_id,
+                    "context": context,
+                }
                 print(hud_context)
                 self._hud_server.publish(hud_context)
             else:
@@ -202,6 +202,7 @@ class LivePipelineDriver:
         fps: float = CAMERA_FPS,
         vision_stride: int = 1,
         static_boundary: float | None = None,
+        external_vision: bool = False,
     ) -> list[dict]:
         owns_mic = mic is None
         if owns_mic:
@@ -227,7 +228,7 @@ class LivePipelineDriver:
             )
             self._hud_server.start()
 
-        if RETRIEVAL_ENABLED:
+        if RETRIEVAL_ENABLED and not external_vision:
             if RetrievalWorker is None:
                 raise RuntimeError(
                     "Retrieval is enabled but pipeline.retrieval is unavailable."
@@ -243,10 +244,10 @@ class LivePipelineDriver:
 
         diarization = DiarizationPipeline(
             identity=self.identity,
-            track_event_queue=track_event_queue,
+            track_event_queue=None if external_vision else track_event_queue,
             static_boundary=static_boundary,
         )
-        diarization.open(fps)
+        diarization.open(fps, owns_vision=not external_vision)
 
         all_combined: list[dict] = []
         all_diarization: list[dict] = []
@@ -262,13 +263,23 @@ class LivePipelineDriver:
             )
 
         try:
-            for frame in camera.frames():
+            for item in camera.frames():
+                if isinstance(item, tuple):
+                    frame, vision_result = item
+                else:
+                    frame, vision_result = item, None
+
                 timestamp = clock_fn(frame_idx)
 
                 chunk = mic.advance_frame()
                 is_vision_frame = frame_idx % vision_stride == 0
                 diarization.process_frame(
-                    frame, chunk, frame_idx, timestamp, is_vision_frame
+                    frame,
+                    chunk,
+                    frame_idx,
+                    timestamp,
+                    is_vision_frame,
+                    vision_result=vision_result,
                 )
 
                 frame_idx += 1
@@ -390,9 +401,33 @@ if __name__ == "__main__":
 
     if args.glasses:
         from input.glasses_adapter import GlassesServer
+        from processing.face_detector import FaceDetector
+        from processing.face_tracker import FaceTracker
 
-        server = GlassesServer(sample_rate=SAMPLE_RATE)
+        retrieval_event_queue = queue.Queue() if RETRIEVAL_ENABLED else None
+        retrieval_enqueue = (
+            retrieval_event_queue.put_nowait if retrieval_event_queue else None
+        )
+        server = GlassesServer(
+            sample_rate=SAMPLE_RATE,
+            detector=FaceDetector(),
+            identity_module=identity,
+            tracker=FaceTracker(),
+            retrieval_enqueue=retrieval_enqueue,
+        )
         camera, mic, clock_fn = server.start()
+
+        if retrieval_event_queue is not None and RetrievalWorker is not None:
+            driver._retrieval_result_queue = queue.Queue()
+            preconfigured_worker = RetrievalWorker(
+                retrieval_event_queue,
+                driver._retrieval_result_queue,
+                RETRIEVAL_COOLDOWN_SECONDS,
+            )
+            preconfigured_worker.start()
+        else:
+            preconfigured_worker = None
+
         try:
             driver.run(
                 camera,
@@ -401,8 +436,11 @@ if __name__ == "__main__":
                 fps=CAMERA_FPS,
                 vision_stride=1,
                 static_boundary=args.boundary,
+                external_vision=True,
             )
         finally:
+            if preconfigured_worker:
+                preconfigured_worker.stop()
             server.stop()
     elif args.source:
         video_path = Path(args.source)

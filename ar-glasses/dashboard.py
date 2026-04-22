@@ -59,7 +59,7 @@ from config import (
     VISION_STRIDE,
 )
 from input.camera import Camera
-from input.microphone import SimulatedMic
+from input.microphone import Microphone, SimulatedMic
 from pipeline.diarization import DiarizationPipeline
 from pipeline.identity import FullIdentity, NullIdentity
 from pipeline.live import (
@@ -277,13 +277,22 @@ def process_video(
     state: DebugState,
     rms_graph: RmsLiveGraph,
     glasses: bool = False,
+    webcam: int | None = None,
 ):
     glasses_server = None
+    db, identity = build_identity(use_identity)
     if glasses:
         from input.glasses_adapter import GlassesServer
 
         glasses_server = GlassesServer(sample_rate=SAMPLE_RATE)
         camera, mic, _ = glasses_server.start()
+        fps = CAMERA_FPS
+        with state.lock:
+            state.video_fps = fps
+    elif webcam is not None:
+        camera = Camera(source=webcam)
+        mic = Microphone(sample_rate=SAMPLE_RATE)
+        mic.open()
         fps = CAMERA_FPS
         with state.lock:
             state.video_fps = fps
@@ -298,7 +307,6 @@ def process_video(
         mic = SimulatedMic(audio, fps, gain=SIMULATION_AUDIO_GAIN, denoise=False)
         camera = Camera(source=str(video_path))
 
-    db, identity = build_identity(use_identity)
     transcription = TranscriptionPipeline()
     driver = LivePipelineDriver(identity, transcription, db)
     install_flush_interceptor(driver, state)
@@ -326,7 +334,8 @@ def process_video(
         retrieval_worker.start()
 
     diarization = DiarizationPipeline(
-        identity=identity, track_event_queue=track_event_queue
+        identity=identity,
+        track_event_queue=track_event_queue,
     )
     diarization.open(fps)
 
@@ -343,14 +352,24 @@ def process_video(
     rate_samples: deque[tuple[float, float]] = deque(maxlen=60)
 
     try:
-        for frame in camera.frames():
+        for item in camera.frames():
+            if isinstance(item, tuple):
+                frame, vision_result = item
+            else:
+                frame, vision_result = item, None
+
             timestamp = camera.last_timestamp_seconds if glasses else frame_idx / fps
             chunk = mic.advance_frame()
             rms_graph.push_audio(chunk, timestamp)
             is_vision_frame = frame_idx % vision_stride == 0
 
             diarization.process_frame(
-                frame, chunk, frame_idx, timestamp, is_vision_frame
+                frame,
+                chunk,
+                frame_idx,
+                timestamp,
+                is_vision_frame,
+                vision_result=vision_result,
             )
 
             annotated = draw_overlay(
@@ -421,6 +440,8 @@ def process_video(
             hud_server.stop()
         diarization.close()
         camera.close()
+        if webcam is not None:
+            mic.close()
         if glasses_server:
             glasses_server.stop()
         with state.lock:
@@ -428,11 +449,13 @@ def process_video(
         print("[dashboard] processing finished")
 
 
-def build_app(state: DebugState, fast: bool, glasses: bool) -> tuple[Flask, SocketIO]:
+def build_app(
+    state: DebugState, fast: bool, glasses: bool, webcam: bool = False
+) -> tuple[Flask, SocketIO]:
     template_dir = Path(__file__).parent / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
     socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
-    hide_audio = fast or glasses
+    hide_audio = fast or glasses or webcam
 
     @app.route("/")
     def index():
@@ -505,6 +528,14 @@ def main():
         "--fast", action="store_true", help="Skip audio + throttle; use VISION_STRIDE."
     )
     parser.add_argument(
+        "--webcam",
+        nargs="?",
+        type=int,
+        const=0,
+        default=None,
+        help="Use laptop camera+mic. Optional integer selects camera index (default 0).",
+    )
+    parser.add_argument(
         "--host", default="127.0.0.1", help="Bind host (default 127.0.0.1)."
     )
     parser.add_argument(
@@ -512,21 +543,25 @@ def main():
     )
     args = parser.parse_args()
 
-    if not args.glasses:
+    if not args.glasses and args.webcam is None:
         if args.video_path is None:
-            parser.error("video_path is required unless --glasses is set")
+            parser.error(
+                "video_path is required unless --glasses or --webcam is set"
+            )
         if not args.video_path.exists():
             print(f"Video not found: {args.video_path}")
             sys.exit(1)
 
     state = DebugState()
-    app, socketio = build_app(state, args.fast, args.glasses)
+    app, socketio = build_app(
+        state, args.fast, args.glasses, webcam=args.webcam is not None
+    )
     rms_graph = RmsLiveGraph(socketio, sample_rate=SAMPLE_RATE)
 
     worker = threading.Thread(
         target=process_video,
         args=(args.video_path, not args.no_identity, args.fast, state, rms_graph),
-        kwargs={"glasses": args.glasses},
+        kwargs={"glasses": args.glasses, "webcam": args.webcam},
         daemon=True,
     )
     worker.start()
