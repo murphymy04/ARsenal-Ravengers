@@ -26,13 +26,12 @@ from input.camera import Camera
 from input.microphone import Microphone, SimulatedMic
 from models import IdentityModule
 from pipeline.diarization import DiarizationPipeline
-from pipeline.driver import combine_segments
+from pipeline.flush_worker import FlushWorker
 from pipeline.identity import FullIdentity
 from pipeline.recording_buffer import (
     ChunkData,
     RecordingBuffer,
     SanitizedConversation,
-    detect_long_turn,
     sanitize,
 )
 from pipeline.transcription import TranscriptionPipeline
@@ -125,6 +124,7 @@ class LivePipelineDriver:
         self.retrieval_results: list[tuple] = []
         self._retrieval_result_queue = None
         self._hud_server = None
+        self.flush_worker: FlushWorker | None = None
 
     def _save_conversation(self, conversation: SanitizedConversation):
         if conversation.person_id is None or not self._db:
@@ -178,12 +178,12 @@ class LivePipelineDriver:
 
             if self._hud_server:
                 print(f"  [hud] publishing person_context for {person_name}")
-                hud_context =  {
-                        "type": "person_context",
-                        "name": person_name,
-                        "person_id": person_id,
-                        "context": context,
-                    }
+                hud_context = {
+                    "type": "person_context",
+                    "name": person_name,
+                    "person_id": person_id,
+                    "context": context,
+                }
                 print(hud_context)
                 self._hud_server.publish(hud_context)
             else:
@@ -193,6 +193,37 @@ class LivePipelineDriver:
         if not self._db:
             return
         self._db.add_interaction(person_id, transcript)
+
+    def start_flush_worker(self):
+        self.flush_worker = FlushWorker(
+            transcription=self.transcription,
+            recording_buffer=self.recording_buffer,
+            pcm_to_wav=pcm_to_wav,
+            sanitize_and_flush=self._sanitize_and_flush,
+        )
+        self.flush_worker.start()
+
+    def submit_flush(
+        self,
+        diarization: DiarizationPipeline,
+        mic,
+        window_start: float,
+        window_end: float,
+    ):
+        diarization_segments = diarization.take_segments(window_end)
+        audio = mic.get_buffer_and_clear()
+        self.flush_worker.submit(diarization_segments, audio, window_start, window_end)
+
+    def drain_flush_results(self) -> list[tuple[list[dict], list[dict]]]:
+        if not self.flush_worker:
+            return []
+        return self.flush_worker.drain_results()
+
+    def stop_flush_worker(self):
+        if not self.flush_worker:
+            return
+        self.flush_worker.stop()
+        self.flush_worker = None
 
     def run(
         self,
@@ -248,6 +279,8 @@ class LivePipelineDriver:
         )
         diarization.open(fps)
 
+        self.start_flush_worker()
+
         all_combined: list[dict] = []
         all_diarization: list[dict] = []
         window_start = 0.0
@@ -276,23 +309,24 @@ class LivePipelineDriver:
 
                 self._publish_retrieval_results()
 
-                if timestamp - window_start >= LIVE_BUFFER_SECONDS:
-                    combined, diarization_segs = self.flush_window(
-                        diarization, mic, window_start, timestamp
-                    )
+                for combined, diar in self.drain_flush_results():
                     all_combined.extend(combined)
-                    all_diarization.extend(diarization_segs)
+                    all_diarization.extend(diar)
+
+                if timestamp - window_start >= LIVE_BUFFER_SECONDS:
+                    self.submit_flush(diarization, mic, window_start, timestamp)
                     window_start = timestamp
                     frames_since_flush = 0
 
             if frames_since_flush:
-                combined, diarization_segs = self.flush_window(
-                    diarization, mic, window_start, timestamp
-                )
-                all_combined.extend(combined)
-                all_diarization.extend(diarization_segs)
+                self.submit_flush(diarization, mic, window_start, timestamp)
 
         finally:
+            self.stop_flush_worker()
+            for combined, diar in self.drain_flush_results():
+                all_combined.extend(combined)
+                all_diarization.extend(diar)
+
             remaining = self.recording_buffer.drain()
             if remaining:
                 self._sanitize_and_flush(remaining)
@@ -309,62 +343,6 @@ class LivePipelineDriver:
                 mic.close()
 
         return all_combined, all_diarization
-
-    def flush_window(
-        self, diarization: DiarizationPipeline, mic, window_start, window_end
-    ) -> tuple[list[dict], list[dict]]:
-        diarization_segments = diarization.take_segments(window_end)
-
-        audio = mic.get_buffer_and_clear()
-        if len(audio) == 0:
-            print(f"\n[{window_start:.1f}s - {window_end:.1f}s] No audio captured")
-            return [], []
-
-        wav_bytes = pcm_to_wav(audio)
-        transcript_segments = self.transcription.run(wav_bytes)
-
-        for seg in transcript_segments:
-            seg.start_time += window_start
-            seg.end_time += window_start
-
-        combined = combine_segments(diarization_segments, transcript_segments)
-
-        long_turn = detect_long_turn(diarization_segments, window_start, window_end)
-        chunk = ChunkData(
-            audio=audio,
-            diarization_segments=diarization_segments,
-            transcript_segments=transcript_segments,
-            combined=combined,
-            window_start=window_start,
-            window_end=window_end,
-        )
-        flushable = self.recording_buffer.ingest(chunk, long_turn)
-        if flushable is not None:
-            self._sanitize_and_flush(flushable)
-
-        print(f"\n[{window_start:.1f}s - {window_end:.1f}s]")
-        print(f"  ASD segments ({len(diarization_segments)}):")
-        for seg in diarization_segments:
-            print(
-                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
-                f"{seg['name']} (track {seg['track_id']})"
-            )
-        print(f"  Combined ({len(combined)}):")
-        for seg in combined:
-            print(
-                f"    [{seg['start']:7.2f} - {seg['end']:7.2f}] "
-                f"{seg['speaker']}: {seg['text']}"
-            )
-
-        self._publish_retrieval_results()
-
-        flag = "ON " if self.recording_buffer.flag else "OFF"
-        print(
-            f"===[ recording={flag} | buffered={len(self.recording_buffer.chunks)} "
-            f"chunks | quiet={self.recording_buffer.quiet_chunks} ]==="
-        )
-
-        return combined, diarization_segments
 
 
 if __name__ == "__main__":
@@ -399,7 +377,7 @@ if __name__ == "__main__":
                 mic=mic,
                 clock_fn=clock_fn,
                 fps=CAMERA_FPS,
-                vision_stride=1,
+                vision_stride=5,
                 static_boundary=args.boundary,
             )
         finally:

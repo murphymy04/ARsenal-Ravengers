@@ -330,6 +330,8 @@ def process_video(
     )
     diarization.open(fps)
 
+    driver.start_flush_worker()
+
     if glasses:
         vision_stride = 1
     elif fast:
@@ -384,28 +386,30 @@ def process_video(
                 with state.lock:
                     state.retrieval.extend(new_retrieval)
 
-            if timestamp - window_start >= LIVE_BUFFER_SECONDS:
-                combined, _ = driver.flush_window(
-                    diarization, mic, window_start, timestamp
-                )
-                new_retrieval, retrieval_seen = drain_new_retrieval(
-                    driver, retrieval_seen
-                )
+            completed = driver.drain_flush_results()
+            if completed:
                 with state.lock:
-                    state.captions.extend(combined)
-                    state.retrieval.extend(new_retrieval)
+                    for combined, _ in completed:
+                        state.captions.extend(combined)
+
+            if timestamp - window_start >= LIVE_BUFFER_SECONDS:
+                driver.submit_flush(diarization, mic, window_start, timestamp)
                 window_start = timestamp
 
             frame_idx += 1
 
         final_end = camera.last_timestamp_seconds if glasses else frame_idx / fps
         if final_end > window_start:
-            combined, _ = driver.flush_window(diarization, mic, window_start, final_end)
-            new_retrieval, retrieval_seen = drain_new_retrieval(driver, retrieval_seen)
-            with state.lock:
-                state.captions.extend(combined)
-                state.retrieval.extend(new_retrieval)
+            driver.submit_flush(diarization, mic, window_start, final_end)
     finally:
+        driver.stop_flush_worker()
+        completed = driver.drain_flush_results()
+        new_retrieval, retrieval_seen = drain_new_retrieval(driver, retrieval_seen)
+        with state.lock:
+            for combined, _ in completed:
+                state.captions.extend(combined)
+            state.retrieval.extend(new_retrieval)
+
         remaining = driver.recording_buffer.drain()
         if remaining:
             driver._sanitize_and_flush(remaining)
