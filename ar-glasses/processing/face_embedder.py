@@ -8,10 +8,11 @@ import sys
 
 import numpy as np
 import torch
-from config import EDGEFACE_CHECKPOINT, EDGEFACE_ROOT, EMBEDDING_MODEL_NAME
 from edgeface.backbones import get_model
 from models import FaceEmbedding
 from torchvision import transforms
+
+from config import EDGEFACE_CHECKPOINT, EDGEFACE_ROOT, EMBEDDING_MODEL_NAME
 
 
 class FaceEmbedder:

@@ -23,6 +23,8 @@ import urllib.request
 import cv2
 import mediapipe as mp
 import numpy as np
+from models import BoundingBox, DetectedFace
+
 from config import (
     DATA_DIR,
     DETECTION_CONFIDENCE,
@@ -32,7 +34,6 @@ from config import (
     SPEAKING_BACKEND,
     SPEAKING_JAW_THRESHOLD,
 )
-from models import BoundingBox, DetectedFace
 
 try:
     from mediapipe.python.solutions import face_detection as mp_face_detection

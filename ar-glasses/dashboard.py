@@ -66,9 +66,8 @@ from pipeline.live import (
     LivePipelineDriver,
     extract_audio_pcm,
     get_video_fps,
-    pcm_to_wav,
 )
-from pipeline.recording_buffer import ChunkData, sanitize
+from pipeline.recording_buffer import ChunkData, pcm_to_wav, sanitize
 from pipeline.transcription import TranscriptionPipeline
 from processing.face_embedder import FaceEmbedder
 from processing.face_matcher import FaceMatcher
