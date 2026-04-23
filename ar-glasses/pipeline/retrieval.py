@@ -35,20 +35,31 @@ met face-to-face. You will be given the person's name, known facts about \
 them from prior conversations, and the transcript of the most recent \
 conversation.
 
-Return a JSON object with exactly these two string fields and no others:
-
+Return a JSON object with exactly these two fields and no others:
 {
   "last_spoke_about": "...",
-  "ask_about": "..."
+  "follow_up": "..." | null
 }
 
 Rules:
 - last_spoke_about: a concise sentence summarising what they talked about \
 last time. No names prefixed, no quotes, under 15 words.
-- ask_about: pick ONE fact most likely to have had an update since last \
-time. Favour future plans, ongoing projects, recurring activities, \
-upcoming events, deadlines. Phrase it as a natural short follow-up the \
-wearer could say aloud, under 10 words, no trailing punctuation.
+
+- follow_up: the single most useful thing the wearer could say next. \
+Priority order:
+  1. If there is an unresolved commitment from last time (something the \
+  wearer promised to send/do, or something the other person promised), \
+  phrase follow_up as a short reminder of the commitment, under 12 words.
+  2. Otherwise, if there is a specific fact likely to have a concrete \
+  update since last time (deadline, trip, launch, event with a date), \
+  phrase follow_up as a natural short follow-up the wearer could say \
+  aloud, under 10 words, no trailing punctuation.
+  3. Otherwise, set follow_up to null. Do not invent a follow-up. A \
+  generic prompt like "ask about her work" is worse than null — the \
+  wearer can generate their own question from last_spoke_about.
+
+Only populate follow_up if it adds information beyond last_spoke_about. \
+If the summary already makes the natural next question obvious, return null.
 """
 
 FORMATTER_RESPONSE_FORMAT = {"type": "json_object"}

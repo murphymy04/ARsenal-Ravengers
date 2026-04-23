@@ -18,7 +18,6 @@ logging.getLogger("neo4j").setLevel(logging.CRITICAL)
 class Person(BaseModel):
     """A person involved in or mentioned during a conversation.
     This includes the wearer and anyone they speak with."""
-
     role: str = Field(
         default="other",
         description="'wearer' if this is the glasses user, otherwise 'other'",
@@ -27,7 +26,6 @@ class Person(BaseModel):
 
 class Product(BaseModel):
     """A product, device, technology, or tool mentioned in the conversation."""
-
     category: str = Field(
         default="",
         description="Category such as 'smart glasses', 'app', 'framework', etc.",
@@ -38,10 +36,35 @@ class Topic(BaseModel):
     """An abstract topic, project, event, or idea discussed in the conversation."""
 
 
+class Commitment(BaseModel):
+    """A promise or unresolved action item between two people,
+    e.g. to send something, make an intro, follow up on a request."""
+    description: str = Field(
+        description="What was promised, in a few words",
+    )
+    status: str = Field(
+        default="open",
+        description="'open' if not yet fulfilled, 'fulfilled' if completed",
+    )
+
+
 ENTITY_TYPES: dict[str, type[BaseModel]] = {
     "Person": Person,
     "Product": Product,
     "Topic": Topic,
+    "Commitment": Commitment,
+}
+
+EDGE_TYPES: dict[str, type[BaseModel]] = {}
+
+EDGE_TYPE_MAP: dict[tuple[str, str], list[str]] = {
+    ("Person", "Person"): ["SPOKE_WITH", "KNOWS", "MENTIONED"],
+    ("Person", "Product"): ["DISCUSSED", "USES", "OWNS", "REVIEWED"],
+    ("Person", "Topic"): ["DISCUSSED", "INTERESTED_IN", "WORKS_ON"],
+    ("Person", "Commitment"): ["PROMISED", "OWED"],
+    ("Commitment", "Person"): ["PROMISED_TO"],
+    ("Product", "Topic"): ["RELATES_TO"],
+    ("Product", "Product"): ["COMPARED_TO", "ALTERNATIVE_TO", "COMPONENT_OF"],
 }
 
 EDGE_TYPES: dict[str, type[BaseModel]] = {}
