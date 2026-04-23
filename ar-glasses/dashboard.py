@@ -341,7 +341,7 @@ def process_video(
     driver.start_flush_worker()
 
     if glasses:
-        vision_stride = 1
+        vision_stride = VISION_STRIDE
     elif fast:
         vision_stride = VISION_STRIDE
     else:

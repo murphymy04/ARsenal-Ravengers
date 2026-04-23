@@ -114,14 +114,7 @@ class PairingLoop:
             self._emitter_thread.join(timeout=2)
 
     def _build_loop(self):
-        last_stats_print = time.time()
-
         while self._running:
-            now = time.time()
-            if now - last_stats_print >= 2.0:
-                last_stats_print = now
-                self._log_stats()
-
             frame = self._stream.get_frame_after(self._last_paired_seq)
             if frame is None:
                 time.sleep(GLASSES_SPIN_INTERVAL_SEC)
@@ -248,28 +241,6 @@ class PairingLoop:
             pass
         self.pairs.put_nowait(pair)
 
-    def _log_stats(self):
-        stats = self._stream.get_stats()
-        latest_audio_ts = self._stream.get_latest_audio_timestamp()
-        with self._staging_lock:
-            staging_depth = len(self._staging)
-            staging_span = (
-                self._staging[-1][2] - self._staging[0][2]
-                if len(self._staging) >= 2
-                else 0.0
-            )
-        print(
-            f"[Pairing] stats: "
-            f"v_recv={stats['frames_received']} "
-            f"v_buf={stats['frames_buffered']} "
-            f"v_drop={stats['frames_dropped']} | "
-            f"a_recv={stats['chunks_received']} "
-            f"a_buf={stats['chunks_buffered']} "
-            f"a_ts={latest_audio_ts} | "
-            f"staging={staging_depth} ({staging_span:.2f}s) "
-            f"pair_q={self.pairs.qsize()}"
-        )
-
 
 class GlassesMic:
     def __init__(self, sample_rate: int):
@@ -324,10 +295,6 @@ class GlassesCamera:
             self._mic.deliver(audio)
             self._last_ts_seconds = ts_seconds
             yield bgr
-
-    @property
-    def is_opened(self) -> bool:
-        return self._running
 
     @property
     def last_timestamp_seconds(self) -> float:
