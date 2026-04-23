@@ -46,9 +46,10 @@ from api.responses import (
 )
 
 try:
-    from pipeline.knowledge import save_to_memory
+    from pipeline.knowledge import flush_memory, save_to_memory
 except ImportError:
     save_to_memory = None
+    flush_memory = None
 
 # Request/Response Models are in api/responses/ and api/requests/
 
@@ -527,39 +528,17 @@ class PeopleAPI:
                     interaction["id"], updated_transcript
                 )
 
-    def _transcript_to_segments(self, transcript: str, person_name: str) -> list[dict]:
-        """Convert interaction transcript to segments format for Zep.
-
-        Args:
-            transcript: The interaction transcript (speaker: text format)
-            person_name: The labeled person name
-
-        Returns:
-            List of segments with speaker and text keys
-        """
-        segments = []
-        if not transcript:
-            return segments
-
-        lines = transcript.split("\n")
-        for line in lines:
-            if ": " in line:
-                speaker, text = line.split(": ", 1)
-                segments.append({"speaker": speaker, "text": text})
-        return segments
-
     def _flush_person_interactions_to_zep(
         self, person_id: int, person_name: str
     ) -> None:
-        """Flush all interactions for a labeled person to Zep (knowledge graph).
+        """Flush all stored interactions for a newly labeled person to Graphiti.
 
-        Converts interaction transcripts to segments and sends to Zep using save_to_memory.
-
-        Args:
-            person_id: The person whose interactions to flush
-            person_name: The labeled person name
+        Mirrors ``LivePipelineDriver._save_conversation``: each interaction's
+        transcript is dispatched via ``save_to_memory`` with the resolved
+        name, then ``flush_memory`` blocks until pending episodes land in the
+        knowledge graph.
         """
-        if save_to_memory is None:
+        if save_to_memory is None or flush_memory is None:
             print("  [knowledge] skipping Zep flush — knowledge support unavailable")
             return
 
@@ -568,19 +547,21 @@ class PeopleAPI:
             print(f"  [knowledge] no interactions to flush for {person_name}")
             return
 
-        # Convert all interactions to segments
-        all_segments = []
+        flushed = 0
         for interaction in interactions:
-            segments = self._transcript_to_segments(
-                interaction["transcript"], person_name
-            )
-            all_segments.extend(segments)
+            transcript = interaction["transcript"]
+            if not transcript:
+                continue
+            save_to_memory(transcript, other_name=person_name)
+            flushed += 1
 
-        if all_segments:
-            save_to_memory(all_segments)
-            print(
-                f"  [knowledge] flushed {len(all_segments)} segments to Zep for {person_name}"
-            )
+        if not flushed:
+            print(f"  [knowledge] no non-empty transcripts for {person_name}")
+            return
+
+        print(f"[knowledge] waiting for pending saves for {person_name}...")
+        flush_memory()
+        print(f"[knowledge] flushed {flushed} interactions to Zep for {person_name}")
 
     def run(
         self,
