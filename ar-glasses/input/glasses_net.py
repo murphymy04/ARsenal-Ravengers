@@ -46,7 +46,6 @@ class FrameData:
     width: int
     height: int
     data: np.ndarray
-    received_at: float
 
 
 @dataclass
@@ -57,12 +56,6 @@ class AudioChunk:
     sample_rate: int
     num_samples: int
     data: np.ndarray
-    received_at: float
-
-
-@dataclass
-class GlassesConnection:
-    serial: str
 
 
 def _adb(*args: str) -> subprocess.CompletedProcess:
@@ -156,7 +149,6 @@ class ScrcpyStream:
     PairingLoop requires no changes.
     """
 
-    _MS_PER_FRAME = 1000 // ANDROID_CAMERA_FPS
     _MS_PER_CHUNK = AUDIO_CHUNK_SAMPLES * 1000 // SAMPLE_RATE
     _FRAME_BYTES = GLASSES_VIDEO_WIDTH * GLASSES_VIDEO_HEIGHT * 3  # bgr24
     _CHUNK_BYTES = AUDIO_CHUNK_SAMPLES * 2  # int16 LE
@@ -170,8 +162,6 @@ class ScrcpyStream:
         self._procs: list[subprocess.Popen] = []
         self._threads: list[threading.Thread] = []
         self._pipe_path: Optional[str] = None
-        self.frames_received = 0
-        self.chunks_received = 0
         self.start_time: Optional[float] = None
 
     def connect(self, serial: str):
@@ -179,8 +169,6 @@ class ScrcpyStream:
             self.disconnect()
         self._running = True
         self.start_time = time.time()
-        self.frames_received = 0
-        self.chunks_received = 0
         with self._frame_lock:
             self._frames.clear()
         with self._chunks_lock:
@@ -225,28 +213,6 @@ class ScrcpyStream:
     def get_latest_audio_timestamp(self) -> Optional[int]:
         with self._chunks_lock:
             return self._chunks[-1].timestamp_end if self._chunks else None
-
-    def get_next_chunk(self, after_seq: int) -> Optional[AudioChunk]:
-        with self._chunks_lock:
-            for chunk in self._chunks:
-                if chunk.seq > after_seq:
-                    return chunk
-        return None
-
-    def get_stats(self) -> dict:
-        elapsed = time.time() - self.start_time if self.start_time else 0
-        return {
-            "frames_received": self.frames_received,
-            "frames_buffered": len(self._frames),
-            "frames_dropped": 0,
-            "incomplete_dropped": 0,
-            "fps": self.frames_received / elapsed if elapsed > 0 else 0,
-            "elapsed": elapsed,
-            "chunks_received": self.chunks_received,
-            "chunks_buffered": len(self._chunks),
-            "chunks_per_sec": self.chunks_received / elapsed if elapsed > 0 else 0,
-            "connected": self._running,
-        }
 
     # --- setup --------------------------------------------------------------
 
@@ -363,33 +329,38 @@ class ScrcpyStream:
             raw = self._recv_exact(stream, self._FRAME_BYTES)
             if raw is None:
                 break
+            now = time.time()
             arr = np.frombuffer(raw, dtype=np.uint8).reshape(
                 (GLASSES_VIDEO_HEIGHT, GLASSES_VIDEO_WIDTH, 3)
             )
             frame = FrameData(
                 seq=seq,
-                timestamp=seq * self._MS_PER_FRAME,
+                timestamp=int((now - self.start_time) * 1000),
                 width=GLASSES_VIDEO_WIDTH,
                 height=GLASSES_VIDEO_HEIGHT,
                 data=arr.copy(),
-                received_at=time.time(),
             )
             with self._frame_lock:
                 self._frames.append(frame)
             if seq == 0:
                 print("[Scrcpy] first video frame received")
             seq += 1
-            self.frames_received += 1
         print("[Scrcpy] Video stream ended")
 
     def _read_audio(self, stream):
         seq = 0
+        first_chunk_offset_ms = 0
         while self._running:
             raw = self._recv_exact(stream, self._CHUNK_BYTES)
             if raw is None:
                 break
+            now = time.time()
             audio = np.frombuffer(raw, dtype=np.int16).copy()
-            ts_start = seq * self._MS_PER_CHUNK
+            if seq == 0:
+                first_chunk_offset_ms = (
+                    int((now - self.start_time) * 1000) - self._MS_PER_CHUNK
+                )
+            ts_start = first_chunk_offset_ms + seq * self._MS_PER_CHUNK
             chunk = AudioChunk(
                 seq=seq,
                 timestamp_start=ts_start,
@@ -397,12 +368,10 @@ class ScrcpyStream:
                 sample_rate=SAMPLE_RATE,
                 num_samples=AUDIO_CHUNK_SAMPLES,
                 data=audio,
-                received_at=time.time(),
             )
             with self._chunks_lock:
                 self._chunks.append(chunk)
             if seq == 0:
                 print("[Scrcpy] first audio chunk received")
             seq += 1
-            self.chunks_received += 1
         print("[Scrcpy] Audio stream ended")
