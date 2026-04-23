@@ -1,22 +1,26 @@
 r"""ADB/scrcpy-based video and audio streaming from USB-connected glasses.
 
 Replaces the WiFi-based DiscoveryService, VideoReceiver (UDP port 5000), and
-AudioReceiver (TCP port 5003) with a single ScrcpyStream that drives scrcpy
-and one FFmpeg subprocess over USB. No WiFi required.
+AudioReceiver (TCP port 5003) with scrcpy + ffmpeg over USB. No WiFi required.
 
-scrcpy records its mkv output to a POSIX FIFO. A single FFmpeg reads that FIFO
-directly and demuxes both streams in one pass -- video goes to one os.pipe()
-as raw BGR, audio goes to another as PCM s16le. Reader threads drain each pipe
-into bounded deques.
+Platform handling for the scrcpy -> ffmpeg handoff:
+  POSIX: scrcpy writes mkv to a FIFO; one ffmpeg reads the FIFO directly and
+    demuxes both streams, emitting raw BGR video to one os.pipe() and PCM
+    s16le audio to another (fds shared via Popen's pass_fds).
+  Windows: Popen has no pass_fds and os.mkfifo doesn't exist. scrcpy writes
+    mkv to a Windows named pipe; a relay thread tees the bytes into two
+    ffmpeg subprocesses' stdin -- one decodes video, one decodes audio --
+    and reader threads drain each ffmpeg's stdout.
 
-AdbWatcher polls `adb devices` and runs `adb forward tcp:HUD_PORT tcp:HUD_PORT`
-on each new device so the glasses Unity app can reach HudBroadcastServer at
-ws://localhost:HUD_PORT without any WiFi.
+AdbWatcher polls `adb devices` and runs `adb reverse tcp:HUD_DEVICE_PORT
+tcp:HUD_HOST_PORT` on each new device so the glasses Unity app can reach
+HudBroadcastServer at ws://localhost:HUD_DEVICE_PORT without any WiFi.
 """
 
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -33,10 +37,12 @@ from input.config import (
     GLASSES_VIDEO_WIDTH,
     SAMPLE_RATE,
 )
-from pipeline.config import HUD_BROADCAST_PORT
+from pipeline.config import HUD_BROADCAST_DEVICE_PORT, HUD_BROADCAST_PORT
 
 AUDIO_CHUNK_SAMPLES = 1600  # 100 ms at 16 kHz
 _ADB_POLL_INTERVAL = 2.0
+_IS_WINDOWS = sys.platform == "win32"
+_RELAY_CHUNK = 65536
 
 
 @dataclass
@@ -64,6 +70,8 @@ def _adb(*args: str) -> subprocess.CompletedProcess:
 
 def _make_pipe_path() -> str:
     uid = uuid.uuid4().hex[:8]
+    if _IS_WINDOWS:
+        return rf"\\.\pipe\ar_glasses_{uid}"
     tmpdir = tempfile.mkdtemp(prefix="ar_glasses_")
     return os.path.join(tmpdir, f"cam_{uid}.mkv")
 
@@ -78,11 +86,13 @@ class AdbWatcher:
         self,
         on_device_connected: Callable[[str], None],
         on_device_disconnected: Callable[[str], None],
-        hud_port: int = HUD_BROADCAST_PORT,
+        host_port: int = HUD_BROADCAST_PORT,
+        device_port: int = HUD_BROADCAST_DEVICE_PORT,
     ):
         self._on_connected = on_device_connected
         self._on_disconnected = on_device_disconnected
-        self._hud_port = hud_port
+        self._host_port = host_port
+        self._device_port = device_port
         self._known: set[str] = set()
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -102,7 +112,7 @@ class AdbWatcher:
         while self._running:
             current = self._connected_serials()
             for serial in current - self._known:
-                self._forward_hud_port(serial)
+                self._reverse_hud_port(serial)
                 self._known.add(serial)
                 self._on_connected(serial)
             for serial in self._known - current:
@@ -119,18 +129,34 @@ class AdbWatcher:
                 serials.add(parts[0])
         return serials
 
-    def _forward_hud_port(self, serial: str):
-        result = _adb(
+    def _reverse_hud_port(self, serial: str):
+        self._strip_stale_forward(serial)
+        _adb("-s", serial, "reverse", "--remove", f"tcp:{self._device_port}")
+        add = _adb(
             "-s",
             serial,
-            "forward",
-            f"tcp:{self._hud_port}",
-            f"tcp:{self._hud_port}",
+            "reverse",
+            f"tcp:{self._device_port}",
+            f"tcp:{self._host_port}",
         )
-        if result.returncode == 0:
-            print(f"[ADB] HUD port {self._hud_port} forwarded for {serial}")
-        else:
-            print(f"[ADB] Port forward failed for {serial}: {result.stderr.strip()}")
+        if add.returncode != 0:
+            print(f"[ADB] reverse failed for {serial}: {add.stderr.strip()}")
+            return
+        print(
+            f"[ADB] reverse tcp:{self._device_port} -> tcp:{self._host_port} "
+            f"for {serial}"
+        )
+        self._log_mappings(serial)
+
+    def _strip_stale_forward(self, serial: str):
+        for port in (self._host_port, self._device_port):
+            _adb("-s", serial, "forward", "--remove", f"tcp:{port}")
+
+    def _log_mappings(self, serial: str):
+        reverse = _adb("-s", serial, "reverse", "--list").stdout.strip()
+        forward = _adb("-s", serial, "forward", "--list").stdout.strip()
+        print(f"[ADB] reverse --list ({serial}):\n{reverse or '  <empty>'}")
+        print(f"[ADB] forward --list ({serial}):\n{forward or '  <empty>'}")
 
 
 # ---------------------------------------------------------------------------
@@ -141,9 +167,13 @@ class AdbWatcher:
 class ScrcpyStream:
     """Camera video and microphone audio from a USB-connected Android device.
 
-    scrcpy writes mkv to a POSIX FIFO; a single FFmpeg reads the FIFO and
-    demuxes both tracks, streaming raw BGR video and PCM s16le audio to two
-    os.pipe() file descriptors. Reader threads drain each into bounded deques.
+    POSIX: scrcpy writes mkv to a FIFO; a single ffmpeg demuxes it into two
+    os.pipe() fds shared via Popen pass_fds. Windows: scrcpy writes mkv to a
+    named pipe; a relay thread tees bytes into two ffmpeg subprocesses' stdin
+    (one video, one audio) because Popen lacks pass_fds on Windows.
+
+    Either way, reader threads drain raw BGR video and PCM s16le audio into
+    bounded deques.
 
     Exposes the same interface as the old VideoReceiver + AudioReceiver so
     PairingLoop requires no changes.
@@ -186,13 +216,13 @@ class ScrcpyStream:
         for t in self._threads:
             t.join(timeout=2)
         self._threads = []
-        if self._pipe_path:
+        if self._pipe_path and not _IS_WINDOWS:
             try:
                 os.unlink(self._pipe_path)
                 os.rmdir(os.path.dirname(self._pipe_path))
             except Exception:
                 pass
-            self._pipe_path = None
+        self._pipe_path = None
         print("[Scrcpy] Disconnected")
 
     def get_frame_after(self, seq: int) -> Optional[FrameData]:
@@ -224,14 +254,21 @@ class ScrcpyStream:
             return
 
         pipe_path = _make_pipe_path()
-        os.mkfifo(pipe_path)
         self._pipe_path = pipe_path
+
+        if _IS_WINDOWS:
+            self._setup_windows(serial, pipe_path)
+        else:
+            self._setup_posix(serial, pipe_path)
+
+    def _setup_posix(self, serial: str, pipe_path: str):
+        os.mkfifo(pipe_path)
 
         video_r, video_w = os.pipe()
         audio_r, audio_w = os.pipe()
 
         scrcpy_proc = self._spawn_scrcpy(serial, pipe_path)
-        ffmpeg_proc = self._spawn_ffmpeg(pipe_path, video_w, audio_w)
+        ffmpeg_proc = self._spawn_ffmpeg_demux(pipe_path, video_w, audio_w)
         os.close(video_w)
         os.close(audio_w)
         self._procs = [scrcpy_proc, ffmpeg_proc]
@@ -250,6 +287,77 @@ class ScrcpyStream:
         for t in self._threads:
             t.start()
         print(f"[Scrcpy] Streaming from {serial}")
+
+    def _setup_windows(self, serial: str, pipe_path: str):
+        import win32pipe  # windows-only optional dependency
+
+        pipe_handle = win32pipe.CreateNamedPipe(
+            pipe_path,
+            win32pipe.PIPE_ACCESS_INBOUND,
+            win32pipe.PIPE_TYPE_BYTE | win32pipe.PIPE_WAIT,
+            1,
+            _RELAY_CHUNK,
+            _RELAY_CHUNK,
+            0,
+            None,
+        )
+
+        scrcpy_proc = self._spawn_scrcpy(serial, pipe_path)
+        video_ffmpeg = self._spawn_ffmpeg_stream("video")
+        audio_ffmpeg = self._spawn_ffmpeg_stream("audio")
+        self._procs = [scrcpy_proc, video_ffmpeg, audio_ffmpeg]
+
+        self._threads = [
+            threading.Thread(
+                target=self._relay_windows_pipe,
+                args=(
+                    pipe_handle,
+                    scrcpy_proc,
+                    video_ffmpeg.stdin,
+                    audio_ffmpeg.stdin,
+                ),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=self._read_video, args=(video_ffmpeg.stdout,), daemon=True
+            ),
+            threading.Thread(
+                target=self._read_audio, args=(audio_ffmpeg.stdout,), daemon=True
+            ),
+        ]
+        for t in self._threads:
+            t.start()
+        print(f"[Scrcpy] Streaming from {serial}")
+
+    def _relay_windows_pipe(self, handle, scrcpy_proc, video_stdin, audio_stdin):
+        import pywintypes  # windows-only
+        import win32file  # windows-only
+        import win32pipe  # windows-only
+
+        try:
+            win32pipe.ConnectNamedPipe(handle, None)
+            while self._running and scrcpy_proc.poll() is None:
+                try:
+                    _, data = win32file.ReadFile(handle, _RELAY_CHUNK)
+                except pywintypes.error:
+                    break
+                if not data:
+                    break
+                try:
+                    video_stdin.write(data)
+                    audio_stdin.write(data)
+                except OSError:
+                    break
+        finally:
+            try:
+                win32file.CloseHandle(handle)
+            except Exception:
+                pass
+            for stream in (video_stdin, audio_stdin):
+                try:
+                    stream.close()
+                except Exception:
+                    pass
 
     def _spawn_scrcpy(self, serial: str, pipe_path: str) -> subprocess.Popen:
         cmd = [
@@ -272,7 +380,7 @@ class ScrcpyStream:
         print(f"[Scrcpy] launching: {' '.join(cmd)}")
         return subprocess.Popen(cmd, stdout=subprocess.DEVNULL)
 
-    def _spawn_ffmpeg(
+    def _spawn_ffmpeg_demux(
         self, input_path: str, video_fd: int, audio_fd: int
     ) -> subprocess.Popen:
         cmd = [
@@ -311,6 +419,50 @@ class ScrcpyStream:
             f"pipe:{audio_fd}",
         ]
         return subprocess.Popen(cmd, pass_fds=(video_fd, audio_fd))
+
+    def _spawn_ffmpeg_stream(self, stream: str) -> subprocess.Popen:
+        if stream == "video":
+            output_args = [
+                "-map",
+                "0:v",
+                "-vf",
+                f"transpose=2,scale={GLASSES_VIDEO_WIDTH}:{GLASSES_VIDEO_HEIGHT}",
+                "-r",
+                str(ANDROID_CAMERA_FPS),
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+            ]
+        else:
+            output_args = [
+                "-map",
+                "0:a",
+                "-f",
+                "s16le",
+                "-ar",
+                str(SAMPLE_RATE),
+                "-ac",
+                "1",
+            ]
+        cmd = [
+            "ffmpeg",
+            "-loglevel",
+            "warning",
+            "-fflags",
+            "nobuffer+discardcorrupt",
+            "-flags",
+            "low_delay",
+            "-probesize",
+            "32",
+            "-analyzeduration",
+            "0",
+            "-i",
+            "pipe:0",
+            *output_args,
+            "pipe:1",
+        ]
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
     # --- readers ------------------------------------------------------------
 
