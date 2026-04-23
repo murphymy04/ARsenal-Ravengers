@@ -81,14 +81,16 @@ EXTRACTION_INSTRUCTIONS = """\
 This is a transcript from smart glasses worn by a person (the "wearer").
 The wearer is having a face-to-face conversation with another person.
 Speaker attribution in the transcript is NOT reliable — treat it as a \
-single mixed stream.
+single mixed stream and infer attribution from content.
 
 Key rules:
 - Create a Person entity for the wearer with role="wearer".
 - Always create a SPOKE_WITH edge between the wearer and the other person.
 - Default assumption: statements describe or come from the OTHER person \
 (the one the wearer is meeting), not the wearer. Attribute facts to the \
-other person unless the content is unmistakably self-referential by the wearer.
+other person unless the content is unmistakably self-referential by the \
+wearer (e.g. "me too", "same here, I also...", or reciprocal disclosures \
+after the other person has shared something).
 - Focus on learning about the other person: their work, projects, opinions, \
 plans, interests, and background.
 - Extract concrete facts as edges: opinions stated, products discussed, \
@@ -98,6 +100,22 @@ plans mentioned, preferences expressed.
 is better than "X discussed Y".
 - Skip filler, back-channel responses, and meta-discussion about the \
 recording setup or glasses themselves.
+
+Commitments (promises, intros, follow-ups):
+- Look for explicit commitment language: "I'll send...", "I'll introduce \
+you to...", "let me share...", "I can connect you with...", "yeah, I'd \
+love that", "sure, send it over".
+- Infer direction from the verb and context, not speaker tags:
+  - "I'll send you X" → speaker promises, addressee receives
+  - "can you send me X" / "would love an intro to X" → addressee promises, \
+  speaker receives
+- Use topical context to disambiguate when unclear. If the commitment \
+concerns the wearer's known work or network, the wearer is likely the \
+one promising; if it concerns the other person's domain, they are.
+- Create a Commitment entity with status="open" and connect it with \
+PROMISED (from the promiser) and PROMISED_TO (to the recipient) edges.
+- Only create commitments for explicit promises. Do not infer commitments \
+from vague interest ("that sounds cool") or hypotheticals.
 """
 
 
