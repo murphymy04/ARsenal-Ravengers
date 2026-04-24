@@ -38,27 +38,27 @@ conversation.
 Return a JSON object with exactly these two fields and no others:
 {
   "last_spoke_about": "...",
-  "follow_up": "..." | null
+  "ask_about": "..." | null
 }
 
 Rules:
 - last_spoke_about: a concise sentence summarising what they talked about \
 last time. No names prefixed, no quotes, under 15 words.
 
-- follow_up: the single most useful thing the wearer could say next. \
+- ask_about: the single most useful thing the wearer could say next. \
 Priority order:
   1. If there is an unresolved commitment from last time (something the \
   wearer promised to send/do, or something the other person promised), \
-  phrase follow_up as a short reminder of the commitment, under 12 words.
+  phrase ask_about as a short reminder of the commitment, under 12 words.
   2. Otherwise, if there is a specific fact likely to have a concrete \
   update since last time (deadline, trip, launch, event with a date), \
-  phrase follow_up as a natural short follow-up the wearer could say \
+  phrase ask_about as a natural short follow-up the wearer could say \
   aloud, under 10 words, no trailing punctuation.
-  3. Otherwise, set follow_up to null. Do not invent a follow-up. A \
+  3. Otherwise, set ask_about to null. Do not invent a follow-up. A \
   generic prompt like "ask about her work" is worse than null — the \
   wearer can generate their own question from last_spoke_about.
 
-Only populate follow_up if it adds information beyond last_spoke_about. \
+Only populate ask_about if it adds information beyond last_spoke_about. \
 If the summary already makes the natural next question obvious, return null.
 """
 
