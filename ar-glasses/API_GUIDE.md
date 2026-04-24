@@ -324,7 +324,7 @@ Behind reverse proxy (e.g., nginx):
   - Set X-Forwarded-For, X-Forwarded-Proto headers for proper HTTPS support
 
 With Docker:
-  See ../knowledge/docker-compose.yml for Neo4j example structure
+  See docker-compose.yml for Neo4j example structure
   (similar setup for API but doesn't need Docker — runs as Python process)
 
 

@@ -1,7 +1,7 @@
 """Seed script — clears Neo4j and adds Timur/Myles conversation about Argus.
 
 Usage:
-    docker compose -f ../knowledge/docker-compose.yml up -d
+    docker compose -f ../docker-compose.yml up -d
     python seed_myles.py
 """
 

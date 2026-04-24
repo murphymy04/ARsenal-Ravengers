@@ -49,7 +49,6 @@ Smart Glasses (camera + mic)
 | Service | What it does | Port |
 |---|---|---|
 | **Neo4j** | Stores the knowledge graph (facts, relationships, conversation history) | 7687 (bolt), 7474 (browser UI) |
-| **Knowledge API** | FastAPI server — ingests transcripts into Neo4j, serves context for recognized people | 8000 |
 | **People API** | FastAPI server — manages face identity database, serves the companion app | 5000 |
 | **Dashboard** | Flask web app — live debug view of the video stream, captions, and retrieval results | 5050 |
 | **HUD Broadcast** | WebSocket server — pushes real-time context cards to the Unity glasses app | 8765 |
@@ -161,8 +160,6 @@ This starts all five services in order, waits for each one to be healthy before 
 ```
 Starting Neo4j...
 Waiting for Neo4j (:7474)...... ready
-Starting knowledge API...
-Waiting for knowledge API (:8000) ready
 Starting people API...
 Waiting for people API (:5000) ready
 
@@ -176,7 +173,6 @@ Starting dashboard (http://localhost:5050)...
 ./run.sh                     # Standard run — glasses mode, background logs suppressed
 ./run.sh --debug             # Show live logs from all background services
 ./run.sh --skip-neo4j        # Skip Neo4j (useful if it's already running)
-./run.sh --skip-knowledge    # Skip knowledge API
 ./run.sh --skip-api          # Skip people API
 ./run.sh -- --fast video.mp4 # Pass custom args to dashboard (e.g. run on a video file)
 ```
@@ -188,7 +184,6 @@ Once running, open these in your browser:
 | URL | What you'll find |
 |---|---|
 | http://localhost:5050 | Live dashboard — annotated video, captions, retrieval results |
-| http://localhost:8000/docs | Knowledge API — interactive API explorer |
 | http://localhost:7474 | Neo4j browser — explore the knowledge graph directly |
 
 Neo4j login: username `neo4j`, password `ravengers`.
@@ -203,13 +198,9 @@ The knowledge graph starts empty. To test retrieval with pre-existing conversati
 # Seed conversations between Timur and Myles Murphy
 cd ar-glasses
 python testing/seed_myles.py
-
-# Or seed conversations between Will and Peter Nguyen
-cd knowledge
-python seed.py
 ```
 
-Each seed script adds a few past conversations to Neo4j. The next time that person's face is recognized during a session, the system will retrieve those facts and generate a conversation prompt.
+This adds a few past conversations to Neo4j. The next time that person's face is recognized during a session, the system will retrieve those facts and generate a conversation prompt.
 
 ---
 
@@ -322,12 +313,9 @@ ARsenal-Ravengers/
 │   ├── edgeface/               ← Face embedding model + checkpoints (bundled)
 │   ├── testing/
 │   │   └── seed_myles.py       ← Seed knowledge graph with sample conversations
+│   ├── docker-compose.yml      ← Neo4j 5.26 database container
 │   ├── requirements.txt        ← Python dependencies
 │   └── .env                    ← API keys (not committed — you create this)
-├── knowledge/
-│   ├── main.py                 ← Knowledge graph REST API (FastAPI, port 8000)
-│   ├── docker-compose.yml      ← Neo4j 5.26 database container
-│   └── seed.py                 ← Alternative seed script
 └── docs/
     └── high_level.md           ← Full system design document
 ```

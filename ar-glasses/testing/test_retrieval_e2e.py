@@ -1,6 +1,6 @@
 """E2E test for the retrieval pipeline.
 
-Requires Neo4j running (docker compose up -d from knowledge/ directory).
+Requires Neo4j running (docker compose up -d from ar-glasses/ directory).
 
 Phase 1 — Seed: processes two videos through the live pipeline with
 SAVE_TO_MEMORY=True to populate the knowledge graph with conversation facts.
