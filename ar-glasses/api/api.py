@@ -46,10 +46,9 @@ from api.responses import (
 )
 
 try:
-    from pipeline.knowledge import flush_memory, save_to_memory
+    from pipeline.knowledge import save_to_memory
 except ImportError:
     save_to_memory = None
-    flush_memory = None
 
 # Request/Response Models are in api/responses/ and api/requests/
 
@@ -531,14 +530,17 @@ class PeopleAPI:
     def _flush_person_interactions_to_zep(
         self, person_id: int, person_name: str
     ) -> None:
-        """Flush all stored interactions for a newly labeled person to Graphiti.
+        """Queue all stored interactions for a newly labeled person to Graphiti.
 
         Mirrors ``LivePipelineDriver._save_conversation``: each interaction's
         transcript is dispatched via ``save_to_memory`` with the resolved
-        name, then ``flush_memory`` blocks until pending episodes land in the
-        knowledge graph.
+        name. save_to_memory is fire-and-forget — it queues onto the
+        KnowledgeStore background loop and returns. Errors surface through
+        the store's done-callback logging, never to the HTTP caller, so a
+        Graphiti/Neo4j hiccup does not strand the label_person endpoint
+        after it has already committed is_labeled=True to the DB.
         """
-        if save_to_memory is None or flush_memory is None:
+        if save_to_memory is None:
             print("  [knowledge] skipping Zep flush — knowledge support unavailable")
             return
 
@@ -547,21 +549,18 @@ class PeopleAPI:
             print(f"  [knowledge] no interactions to flush for {person_name}")
             return
 
-        flushed = 0
+        queued = 0
         for interaction in interactions:
             transcript = interaction["transcript"]
             if not transcript:
                 continue
-            save_to_memory(transcript, other_name=person_name)
-            flushed += 1
+            try:
+                save_to_memory(transcript, other_name=person_name)
+                queued += 1
+            except Exception as exc:
+                print(f"  [knowledge] save_to_memory failed for {person_name}: {exc}")
 
-        if not flushed:
-            print(f"  [knowledge] no non-empty transcripts for {person_name}")
-            return
-
-        print(f"[knowledge] waiting for pending saves for {person_name}...")
-        flush_memory()
-        print(f"[knowledge] flushed {flushed} interactions to Zep for {person_name}")
+        print(f"  [knowledge] queued {queued} interactions for {person_name}")
 
     def run(
         self,
