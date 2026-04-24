@@ -68,12 +68,10 @@ drifts more than a second behind. Consumers pay a one-time startup delay
 equal to the prebuffer, then receive a steady 30 pairs/sec regardless of
 how the network batches audio.
 
-The streamtest reference client (`serveraudioplaybuffer.py`) sidesteps this
-entirely because it never pairs. It shows the newest-available frame via
-`get_latest_frame` and plays audio through a PortAudio ring buffer with a
-200ms jitter prebuffer; the sound card provides the real-time clock for free.
-The ASD pipeline needs synchronized (frame, audio-slice) pairs, so it has to
-supply its own pacing clock instead of leaning on the speaker.
+A viewer that never pairs (just showing the newest frame and streaming audio
+through a ring buffer) can lean on the sound card as its real-time clock. The
+ASD pipeline needs synchronized (frame, audio-slice) pairs, so it has to
+supply its own pacing clock instead.
 
 Tunables live in `config.py`: `GLASSES_PREBUFFER_SECONDS`,
 `GLASSES_MAX_STAGING_SECONDS`, `GLASSES_PAIR_QUEUE_MAX`, and

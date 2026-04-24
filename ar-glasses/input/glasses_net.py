@@ -1,7 +1,7 @@
 r"""ADB/scrcpy-based video and audio streaming from USB-connected glasses.
 
-Replaces the WiFi-based DiscoveryService, VideoReceiver (UDP port 5000), and
-AudioReceiver (TCP port 5003) with scrcpy + ffmpeg over USB. No WiFi required.
+Streams video and audio from the glasses over USB via scrcpy + ffmpeg. No
+WiFi required.
 
 Platform handling for the scrcpy -> ffmpeg handoff:
   POSIX: scrcpy writes mkv to a FIFO; one ffmpeg reads the FIFO directly and
@@ -173,10 +173,7 @@ class ScrcpyStream:
     (one video, one audio) because Popen lacks pass_fds on Windows.
 
     Either way, reader threads drain raw BGR video and PCM s16le audio into
-    bounded deques.
-
-    Exposes the same interface as the old VideoReceiver + AudioReceiver so
-    PairingLoop requires no changes.
+    bounded deques that PairingLoop reads from.
     """
 
     _MS_PER_CHUNK = AUDIO_CHUNK_SAMPLES * 1000 // SAMPLE_RATE

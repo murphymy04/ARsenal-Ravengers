@@ -1,34 +1,17 @@
-r"""Android camera input — two backends available.
+r"""Android camera input via scrcpy + ffmpeg (--camera android).
 
-Backend 1: scrcpy + ffmpeg  (--camera android)
------------------------------------------------
-  INMO Air 3 camera
-    → scrcpy  --record=\\.\pipe\ar_camera  (Windows named pipe / POSIX FIFO)
-    → relay thread  (reads pipe → writes to ffmpeg stdin)
-    → ffmpeg        (H.264 → raw BGR)
-    → reader thread (drains stdout, keeps latest frame)
-    → frames()      (yields latest frame to pipeline)
+INMO Air 3 camera
+  → scrcpy  --record=\\.\pipe\ar_camera  (Windows named pipe / POSIX FIFO)
+  → relay thread  (reads pipe → writes to ffmpeg stdin)
+  → ffmpeg        (H.264 → raw BGR)
+  → reader thread (drains stdout, keeps latest frame)
+  → frames()      (yields latest frame to pipeline)
 
-  Requirements (install on Windows, add to PATH):
-    scrcpy  ≥ 2.0   https://github.com/Genymobile/scrcpy/releases
-    ffmpeg          https://ffmpeg.org/download.html
-    adb             bundled with scrcpy, or Android Platform Tools
-    pip install pywin32          # Windows only
-
-Backend 2: IP Webcam app  (--camera ipwebcam)
-----------------------------------------------
-  Install "IP Webcam" (by Pavel Khlebovich) from the Play Store on the glasses.
-  Open the app → tap "Start server" (default port 8080).
-  Forward the port over USB so no WiFi is needed:
-    adb forward tcp:8080 tcp:8080
-  Then run:
-    python main.py --camera ipwebcam
-  or with a custom URL:
-    python main.py --camera ipwebcam --ipwebcam-url http://localhost:9090/video
-
-  Requirements:
-    adb             bundled with scrcpy, or Android Platform Tools
-    opencv-python   (already a project dependency)
+Requirements (install on Windows, add to PATH):
+  scrcpy  ≥ 2.0   https://github.com/Genymobile/scrcpy/releases
+  ffmpeg          https://ffmpeg.org/download.html
+  adb             bundled with scrcpy, or Android Platform Tools
+  pip install pywin32          # Windows only
 """
 
 import os
@@ -40,7 +23,6 @@ import time
 import uuid
 from typing import Generator, Optional
 
-import cv2
 import numpy as np
 
 from config import CAMERA_WIDTH, CAMERA_HEIGHT, ANDROID_CAMERA_FPS as CAMERA_FPS
@@ -264,111 +246,3 @@ def _check_dependencies():
             import win32pipe  # noqa: F401
         except ImportError:
             raise RuntimeError("pywin32 not installed. Run: pip install pywin32")
-
-
-# ---------------------------------------------------------------------------
-# Backend 2: IP Webcam (Play Store app, MJPEG over HTTP via adb forward)
-# ---------------------------------------------------------------------------
-
-_IPWEBCAM_DEFAULT_URL = "http://localhost:8080/video"
-_IPWEBCAM_CONNECT_TIMEOUT = 10  # seconds to wait for first frame
-
-
-class IPWebcamCamera:
-    """Streams MJPEG from the 'IP Webcam' Android app via adb port-forward.
-
-    Setup:
-        1. Install 'IP Webcam' (Pavel Khlebovich) from the Play Store.
-        2. Open the app, configure resolution/FPS, tap 'Start server'.
-        3. On the PC run once:  adb forward tcp:8080 tcp:8080
-        4. Pass --camera ipwebcam to demo.py / main.py.
-    """
-
-    def __init__(
-        self,
-        url: str = _IPWEBCAM_DEFAULT_URL,
-        rotation: int = cv2.ROTATE_90_COUNTERCLOCKWISE,
-    ):
-        """
-        Args:
-            url:      MJPEG stream URL from the IP Webcam app.
-            rotation: cv2 rotation code applied to every frame.
-                      cv2.ROTATE_90_CLOCKWISE (default)
-                      cv2.ROTATE_90_COUNTERCLOCKWISE
-                      cv2.ROTATE_180
-                      None — no rotation
-        """
-        self._url = url
-        self._rotation = rotation
-        self._cap = cv2.VideoCapture(url)
-        if not self._cap.isOpened():
-            raise RuntimeError(
-                f"Cannot open IP Webcam stream at {url}\n"
-                "  • Make sure the IP Webcam app is running on the glasses.\n"
-                "  • Run:  adb forward tcp:8080 tcp:8080"
-            )
-
-        self._latest: Optional[np.ndarray] = None
-        self._lock = threading.Lock()
-        self._opened = True
-
-        self._reader = threading.Thread(target=self._reader_loop, daemon=True)
-        self._reader.start()
-
-        # Block until the first frame arrives (or timeout)
-        deadline = time.time() + _IPWEBCAM_CONNECT_TIMEOUT
-        while time.time() < deadline:
-            with self._lock:
-                if self._latest is not None:
-                    break
-            time.sleep(0.05)
-        else:
-            self.close()
-            raise RuntimeError(
-                f"IP Webcam stream opened but no frames received after "
-                f"{_IPWEBCAM_CONNECT_TIMEOUT}s.\n"
-                "  Check that the app is streaming and adb forward is active."
-            )
-
-        h, w = self._latest.shape[:2]
-        print(f"[IPWebcamCamera] stream started — {w}×{h} from {url}")
-
-    # ------------------------------------------------------------------
-
-    def _reader_loop(self):
-        """Continuously read frames; keep only the latest to avoid stale data."""
-        while self._opened:
-            ret, frame = self._cap.read()
-            if not ret:
-                self._opened = False
-                break
-            if self._rotation is not None:
-                frame = cv2.rotate(frame, self._rotation)
-            with self._lock:
-                self._latest = frame
-
-    def frames(self) -> Generator[np.ndarray, None, None]:
-        """Yield the latest BGR frame as fast as the pipeline consumes it."""
-        while self.is_opened:
-            with self._lock:
-                frame = self._latest
-                self._latest = None
-            if frame is not None:
-                yield frame
-            else:
-                time.sleep(0.001)
-
-    @property
-    def is_opened(self) -> bool:
-        return self._opened
-
-    def close(self):
-        self._opened = False
-        self._cap.release()
-        self._reader.join(timeout=3)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        self.close()
