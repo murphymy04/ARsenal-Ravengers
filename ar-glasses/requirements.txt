@@ -29,7 +29,6 @@ fastapi>=0.104
 uvicorn[standard]>=0.24
 python-multipart
 firebase-admin>=7.0.0
-supabase
 
 # Debug viewer
 flask>=3.0

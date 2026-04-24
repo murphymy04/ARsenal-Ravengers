@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
 os.environ.setdefault("NEO4J_PASSWORD", "ravengers")
-os.environ["STORAGE_BACKEND"] = "sqlite"
 
 import pipeline.live as live_module
 from config import DATA_DIR, VISION_STRIDE
