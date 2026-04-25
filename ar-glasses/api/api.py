@@ -233,15 +233,26 @@ class PeopleAPI:
                     status_code=404, detail=f"Person {person_id} not found"
                 )
 
-            if person.is_labeled:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Person {person_id} is already labeled; cannot relabel",
-                )
-
             name = request.name.strip()
             if not name:
                 raise HTTPException(status_code=400, detail="Name cannot be empty")
+
+            if person.is_labeled:
+                if self._normalize_name(person.name) == self._normalize_name(name):
+                    return LabelResponse(
+                        person_id=person_id,
+                        name=person.name,
+                        is_labeled=True,
+                        action="already_labeled",
+                        details=f"Cluster {person_id} already labeled as '{person.name}'",
+                    )
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Person {person_id} is already labeled as "
+                        f"'{person.name}'; cannot relabel"
+                    ),
+                )
 
             # Update person with the new name and mark as labeled
             self.db.update_person(person_id, name=name, is_labeled=True)
@@ -527,37 +538,16 @@ class PeopleAPI:
                     interaction["id"], updated_transcript
                 )
 
-    def _transcript_to_segments(self, transcript: str, person_name: str) -> list[dict]:
-        """Convert interaction transcript to segments format for Zep.
-
-        Args:
-            transcript: The interaction transcript (speaker: text format)
-            person_name: The labeled person name
-
-        Returns:
-            List of segments with speaker and text keys
-        """
-        segments = []
-        if not transcript:
-            return segments
-
-        lines = transcript.split("\n")
-        for line in lines:
-            if ": " in line:
-                speaker, text = line.split(": ", 1)
-                segments.append({"speaker": speaker, "text": text})
-        return segments
-
     def _flush_person_interactions_to_zep(
         self, person_id: int, person_name: str
     ) -> None:
-        """Flush all interactions for a labeled person to Zep (knowledge graph).
+        """Queue stored interactions for a newly labeled person to Graphiti.
 
-        Converts interaction transcripts to segments and sends to Zep using save_to_memory.
-
-        Args:
-            person_id: The person whose interactions to flush
-            person_name: The labeled person name
+        save_to_memory is fire-and-forget: it enqueues onto the
+        KnowledgeStore background asyncio loop and returns. Errors surface
+        through the store's done-callback logging, never to the HTTP caller.
+        This keeps label_person under ~50ms in the steady state so retries
+        do not race a slow blocking flush after is_labeled=True is committed.
         """
         if save_to_memory is None:
             print("  [knowledge] skipping Zep flush — knowledge support unavailable")
@@ -568,19 +558,21 @@ class PeopleAPI:
             print(f"  [knowledge] no interactions to flush for {person_name}")
             return
 
-        # Convert all interactions to segments
-        all_segments = []
+        queued = 0
         for interaction in interactions:
-            segments = self._transcript_to_segments(
-                interaction["transcript"], person_name
-            )
-            all_segments.extend(segments)
+            transcript = interaction["transcript"]
+            if not transcript:
+                continue
+            try:
+                save_to_memory(transcript, other_name=person_name)
+                queued += 1
+            except Exception as exc:
+                print(f"  [knowledge] save_to_memory failed for {person_name}: {exc}")
 
-        if all_segments:
-            save_to_memory(all_segments)
-            print(
-                f"  [knowledge] flushed {len(all_segments)} segments to Zep for {person_name}"
-            )
+        print(
+            f"  [knowledge] queued {queued} interactions for {person_name}; "
+            "saves complete asynchronously"
+        )
 
     def run(
         self,
