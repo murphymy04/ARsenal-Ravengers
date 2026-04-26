@@ -41,4 +41,4 @@ asyncio.run(main())
 ## Behavior
 - Run the script above via Bash.
 - Report how many nodes and relationships were deleted.
-- If Neo4j is not running, tell the user to start it with `docker compose -f ../knowledge/docker-compose.yml up -d`.
+- If Neo4j is not running, tell the user to start it with `docker compose up -d` from the `ar-glasses/` directory.

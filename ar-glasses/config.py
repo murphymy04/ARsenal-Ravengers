@@ -16,7 +16,6 @@ from paths import (  # noqa: F401
 from input.config import *  # noqa: F401, F403
 from pipeline.config import *  # noqa: F401, F403
 from processing.config import *  # noqa: F401, F403
-from storage.config import *  # noqa: F401, F403
 
 
 # Display

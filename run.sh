@@ -3,12 +3,11 @@
 #
 # Services started (in order):
 #   1. Neo4j          — docker compose  (bolt :7687, browser :7474)
-#   2. Knowledge API  — knowledge/main.py via uv  (FastAPI :8000)
-#   3. People API     — ar-glasses/api/api.py      (FastAPI :5000)
-#   4. Dashboard      — ar-glasses/dashboard.py    (Flask  :5050)  [foreground]
+#   2. People API     — ar-glasses/api/api.py      (FastAPI :5000)
+#   3. Dashboard      — ar-glasses/dashboard.py    (Flask  :5050)  [foreground]
 #
 # Usage:
-#   ./run.sh [--debug] [--skip-neo4j] [--skip-knowledge] [--skip-api] [-- <dashboard args>]
+#   ./run.sh [--debug] [--skip-neo4j] [--skip-api] [-- <dashboard args>]
 #
 # --debug              Show live logs from all background services with [prefix] labels.
 #                      Without this flag, background service output is suppressed.
@@ -18,13 +17,11 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AR_GLASSES_DIR="$SCRIPT_DIR/ar-glasses"
-KNOWLEDGE_DIR="$SCRIPT_DIR/knowledge"
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
 
 DEBUG=false
 SKIP_NEO4J=false
-SKIP_KNOWLEDGE=false
 SKIP_API=false
 DASHBOARD_ARGS=()
 PARSING_DASHBOARD_ARGS=false
@@ -38,13 +35,11 @@ for arg in "$@"; do
     DEBUG=true
   elif [[ "$arg" == "--skip-neo4j" ]]; then
     SKIP_NEO4J=true
-  elif [[ "$arg" == "--skip-knowledge" ]]; then
-    SKIP_KNOWLEDGE=true
   elif [[ "$arg" == "--skip-api" ]]; then
     SKIP_API=true
   else
     echo "Unknown flag: $arg" >&2
-    echo "Usage: $0 [--debug] [--skip-neo4j] [--skip-knowledge] [--skip-api] [-- <dashboard args>]" >&2
+    echo "Usage: $0 [--debug] [--skip-neo4j] [--skip-api] [-- <dashboard args>]" >&2
     exit 1
   fi
 done
@@ -94,10 +89,9 @@ cleanup() {
   kill_port 8765  # HUD WebSocket broadcast
   kill_port 5050  # Flask dashboard
   kill_port 5000  # People API
-  kill_port 8000  # Knowledge API
   if ! $SKIP_NEO4J; then
     echo "Stopping Neo4j..."
-    docker compose -f "$KNOWLEDGE_DIR/docker-compose.yml" down
+    docker compose -f "$AR_GLASSES_DIR/docker-compose.yml" down
   fi
   echo "Done."
 }
@@ -153,9 +147,9 @@ service_output() {
 if ! $SKIP_NEO4J; then
   echo "Starting Neo4j..."
   if $DEBUG; then
-    docker compose -f "$KNOWLEDGE_DIR/docker-compose.yml" up -d
+    docker compose -f "$AR_GLASSES_DIR/docker-compose.yml" up -d
   else
-    docker compose -f "$KNOWLEDGE_DIR/docker-compose.yml" up -d --quiet-pull 2>/dev/null
+    docker compose -f "$AR_GLASSES_DIR/docker-compose.yml" up -d --quiet-pull 2>/dev/null
   fi
   echo -n "Waiting for Neo4j (:7474)"
   for _ in $(seq 1 60); do
@@ -168,18 +162,7 @@ if ! $SKIP_NEO4J; then
   done
 fi
 
-# ── 2. Knowledge API (port 8000) ──────────────────────────────────────────────
-
-if ! $SKIP_KNOWLEDGE; then
-  free_port 8000
-  echo "Starting knowledge API..."
-  (cd "$KNOWLEDGE_DIR" && uv run uvicorn main:app --host 0.0.0.0 --port 8000 2>&1 \
-    | service_output "knowledge") &
-  PIDS+=($!)
-  wait_for_port "knowledge API" 8000 20
-fi
-
-# ── 3. People API (port 5000) ─────────────────────────────────────────────────
+# ── 2. People API (port 5000) ─────────────────────────────────────────────────
 
 if ! $SKIP_API; then
   free_port 5000
@@ -190,7 +173,7 @@ if ! $SKIP_API; then
   wait_for_port "people API" 5000 20
 fi
 
-# ── 4. Dashboard (foreground) ─────────────────────────────────────────────────
+# ── 3. Dashboard (foreground) ─────────────────────────────────────────────────
 
 free_port 5050   # Flask dashboard
 free_port 8765   # HUD WebSocket broadcast (HUD_BROADCAST_PORT default)

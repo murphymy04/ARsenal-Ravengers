@@ -40,4 +40,4 @@ asyncio.run(main())
 - Replace `$ARGUMENTS` with the person name the user provided.
 - Run the script via Bash.
 - Present the facts clearly. If no results, tell the user the graph may be empty or not seeded for that person.
-- If Neo4j is not running, tell the user to start it with `docker compose -f ../knowledge/docker-compose.yml up -d`.
+- If Neo4j is not running, tell the user to start it with `docker compose up -d` from the `ar-glasses/` directory.
