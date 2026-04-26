@@ -69,6 +69,29 @@ except ImportError:
     HudBroadcastServer = None
 
 
+def _log_track_summary(
+    window_start: float, window_end: float, track_log: dict[int, dict]
+) -> None:
+    if not track_log:
+        print(f"\n[{window_start:.1f}s - {window_end:.1f}s] TRACKS: none visible")
+        return
+    print(f"\n[{window_start:.1f}s - {window_end:.1f}s] TRACKS ({len(track_log)}):")
+    for tid, entry in sorted(track_log.items()):
+        known = "KNOWN  " if entry["is_known"] else "UNKNOWN"
+        speak_pct = (
+            100 * entry["frames_speaking"] / entry["frames_seen"]
+            if entry["frames_seen"]
+            else 0
+        )
+        print(
+            f"  track {tid:>2}  {known}  name={entry['name']:<22}  "
+            f"person_id={entry['person_id']!s:<6}  "
+            f"seen={entry['frames_seen']:>4}f  "
+            f"speaking={entry['frames_speaking']:>4}f ({speak_pct:5.1f}%)  "
+            f"max_res={entry['max_width']}x{entry['max_height']}"
+        )
+
+
 def extract_audio_pcm(video_path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     cmd = [
         "ffmpeg",
@@ -197,6 +220,8 @@ class LivePipelineDriver:
         window_end: float,
     ):
         diarization_segments = diarization.take_segments(window_end)
+        track_log = diarization.take_track_log()
+        _log_track_summary(window_start, window_end, track_log)
         audio = mic.get_buffer_and_clear()
         self.flush_worker.submit(diarization_segments, audio, window_start, window_end)
 

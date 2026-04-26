@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cv2
 import numpy as np
-from flask import Flask, Response, jsonify, render_template
+from flask import Flask, Response, jsonify, render_template, request
 from flask_socketio import SocketIO
 
 from config import (
@@ -512,6 +512,28 @@ def build_app(
                 flushing=state.flushing,
             )
 
+    @app.route("/api/knowledge/graph")
+    def knowledge_graph():
+        from pipeline.knowledge_query import fetch_graph
+
+        try:
+            return jsonify(fetch_graph())
+        except Exception as exc:
+            return jsonify(error=str(exc)), 500
+
+    @app.route("/api/knowledge/ask", methods=["POST"])
+    def knowledge_ask():
+        from pipeline.knowledge_query import ask
+
+        payload = request.get_json(silent=True) or {}
+        question = (payload.get("question") or "").strip()
+        if not question:
+            return jsonify(error="empty question"), 400
+        try:
+            return jsonify(ask(question))
+        except Exception as exc:
+            return jsonify(error=str(exc)), 500
+
     return app, socketio
 
 
@@ -548,9 +570,7 @@ def main():
 
     if not args.glasses and args.webcam is None:
         if args.video_path is None:
-            parser.error(
-                "video_path is required unless --glasses or --webcam is set"
-            )
+            parser.error("video_path is required unless --glasses or --webcam is set")
         if not args.video_path.exists():
             print(f"Video not found: {args.video_path}")
             sys.exit(1)

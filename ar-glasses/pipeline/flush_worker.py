@@ -59,7 +59,15 @@ class FlushWorker:
             item = self._work_queue.get()
             if item is None:
                 return
-            self._process_window(*item)
+            try:
+                self._process_window(*item)
+            except Exception as exc:
+                window_start, window_end = item[2], item[3]
+                print(
+                    f"\n[{window_start:.1f}s - {window_end:.1f}s] "
+                    f"flush window failed: {type(exc).__name__}: {exc}"
+                )
+                self._result_queue.put(([], item[0]))
 
     def _process_window(
         self,

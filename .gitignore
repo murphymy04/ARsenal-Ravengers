@@ -19,6 +19,9 @@ ENV/
 # Database (runtime data)
 ar-glasses/data/
 
+# Seed videos (pulled off glasses for testing, not checked in)
+ar-glasses/seeding_videos/
+
 # Model checkpoints (large binary files - already bundled in edgeface/checkpoints/)
 # Uncomment below if you want to exclude them from git:
 # *.pt

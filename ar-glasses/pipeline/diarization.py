@@ -52,6 +52,7 @@ class DiarizationPipeline:
         self._last_faces: list = []
         self._last_smoothed: list = []
         self._last_track_ids: list = []
+        self._track_log: dict[int, dict] = {}
         self._dispatcher = (
             RetrievalDispatcher(track_event_queue.put_nowait)
             if track_event_queue
@@ -102,10 +103,11 @@ class DiarizationPipeline:
         self._speaker.run_inference(frame_idx, active_track_ids=set(track_ids))
 
         speaking_count = 0
-        for _face, match, tid in zip(faces, smoothed, track_ids, strict=False):
+        for face, match, tid in zip(faces, smoothed, track_ids, strict=False):
             is_speaking = self._speaker.get_speaking(tid)
             if is_speaking:
                 speaking_count += 1
+            self._update_track_log(tid, face, match, is_speaking)
             self._log.update(
                 track_id=tid,
                 person_id=match.person_id if match.is_known else None,
@@ -115,6 +117,37 @@ class DiarizationPipeline:
             )
 
         return len(faces), speaking_count
+
+    def _update_track_log(self, tid: int, face, match, is_speaking: bool):
+        b = face.bbox
+        width = max(0, b.x2 - b.x1)
+        height = max(0, b.y2 - b.y1)
+        entry = self._track_log.setdefault(
+            tid,
+            {
+                "frames_seen": 0,
+                "frames_speaking": 0,
+                "max_width": 0,
+                "max_height": 0,
+                "name": None,
+                "person_id": None,
+                "is_known": False,
+            },
+        )
+        entry["frames_seen"] += 1
+        if is_speaking:
+            entry["frames_speaking"] += 1
+        if width * height > entry["max_width"] * entry["max_height"]:
+            entry["max_width"] = width
+            entry["max_height"] = height
+        entry["name"] = match.name if match.is_known else f"track_{tid}"
+        entry["person_id"] = match.person_id if match.is_known else None
+        entry["is_known"] = match.is_known
+
+    def take_track_log(self) -> dict[int, dict]:
+        log = self._track_log
+        self._track_log = {}
+        return log
 
     def _run_vision_in_band(
         self, frame: np.ndarray, frame_idx: int, timestamp: float
