@@ -15,7 +15,7 @@ from typing import Optional
 
 
 # Segments shorter than this are discarded as noise (seconds)
-_MIN_SEGMENT_DURATION = 0.4
+_MIN_SEGMENT_DURATION = 0.05
 
 
 @dataclass

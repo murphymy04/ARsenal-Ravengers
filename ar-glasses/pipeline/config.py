@@ -12,7 +12,7 @@ SILENCE_THRESHOLD = 2.0  # seconds of silence before processing
 
 # Live pipeline
 LIVE_BUFFER_SECONDS = 7  # process audio/video in N-second windows
-VISION_STRIDE = 10  # process faces every Nth frame for accelerated video processing
+VISION_STRIDE = 5  # process faces every Nth frame for accelerated video processing
 
 
 # Knowledge graph (Zep Graphiti → Neo4j)
