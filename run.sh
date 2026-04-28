@@ -7,8 +7,17 @@
 #   3. Dashboard      — ar-glasses/dashboard.py    (Flask  :5050)  [foreground]
 #
 # Usage:
-#   ./run.sh [--debug] [--skip-neo4j] [--skip-api] [-- <dashboard args>]
+#   ./run.sh [--enroll|--retrieval] [--debug] [--skip-neo4j] [--skip-api] [-- <dashboard args>]
 #
+# --enroll             (default) Enroll mode — auto-clusters new faces, saves
+#                      conversations to the knowledge graph, retrieves context,
+#                      and broadcasts to the HUD. Sets AUTO_ENROLL_ENABLED,
+#                      SAVE_TO_MEMORY, RETRIEVAL_ENABLED, HUD_BROADCAST_ENABLED to true.
+# --retrieval          Retrieval-only mode — recognizes already-labeled people and
+#                      pushes context to the HUD without auto-clustering new faces
+#                      or writing the current conversation to the graph. Sets
+#                      RETRIEVAL_ENABLED and HUD_BROADCAST_ENABLED to true;
+#                      AUTO_ENROLL_ENABLED and SAVE_TO_MEMORY stay false.
 # --debug              Show live logs from all background services with [prefix] labels.
 #                      Without this flag, background service output is suppressed.
 # Any args after --    Forwarded to dashboard.py instead of the default --glasses.
@@ -23,8 +32,12 @@ AR_GLASSES_DIR="$SCRIPT_DIR/ar-glasses"
 DEBUG=false
 SKIP_NEO4J=false
 SKIP_API=false
+MODE=enroll  # enroll (default) | retrieval
+MODE_EXPLICIT=false
 DASHBOARD_ARGS=()
 PARSING_DASHBOARD_ARGS=false
+
+USAGE="Usage: $0 [--enroll|--retrieval] [--debug] [--skip-neo4j] [--skip-api] [-- <dashboard args>]"
 
 for arg in "$@"; do
   if $PARSING_DASHBOARD_ARGS; then
@@ -37,12 +50,41 @@ for arg in "$@"; do
     SKIP_NEO4J=true
   elif [[ "$arg" == "--skip-api" ]]; then
     SKIP_API=true
+  elif [[ "$arg" == "--enroll" ]]; then
+    if $MODE_EXPLICIT && [[ "$MODE" != "enroll" ]]; then
+      echo "Error: --enroll and --retrieval are mutually exclusive" >&2
+      exit 1
+    fi
+    MODE=enroll
+    MODE_EXPLICIT=true
+  elif [[ "$arg" == "--retrieval" ]]; then
+    if $MODE_EXPLICIT && [[ "$MODE" != "retrieval" ]]; then
+      echo "Error: --enroll and --retrieval are mutually exclusive" >&2
+      exit 1
+    fi
+    MODE=retrieval
+    MODE_EXPLICIT=true
   else
     echo "Unknown flag: $arg" >&2
-    echo "Usage: $0 [--debug] [--skip-neo4j] [--skip-api] [-- <dashboard args>]" >&2
+    echo "$USAGE" >&2
     exit 1
   fi
 done
+
+case "$MODE" in
+  enroll)
+    AUTO_ENROLL_ENABLED=true
+    SAVE_TO_MEMORY=true
+    RETRIEVAL_ENABLED=true
+    HUD_BROADCAST_ENABLED=true
+    ;;
+  retrieval)
+    AUTO_ENROLL_ENABLED=false
+    SAVE_TO_MEMORY=false
+    RETRIEVAL_ENABLED=true
+    HUD_BROADCAST_ENABLED=true
+    ;;
+esac
 
 # Default dashboard args if none provided after --
 if [[ ${#DASHBOARD_ARGS[@]} -eq 0 ]]; then
@@ -180,13 +222,15 @@ free_port 8765   # HUD WebSocket broadcast (HUD_BROADCAST_PORT default)
 
 echo ""
 echo "Starting dashboard (http://localhost:5050)..."
+echo "  Mode: $MODE (AUTO_ENROLL_ENABLED=$AUTO_ENROLL_ENABLED, SAVE_TO_MEMORY=$SAVE_TO_MEMORY, RETRIEVAL_ENABLED=$RETRIEVAL_ENABLED, HUD_BROADCAST_ENABLED=$HUD_BROADCAST_ENABLED)"
 echo "  Args: ${DASHBOARD_ARGS[*]}"
 $DEBUG && echo "  Debug mode: background service logs enabled"
 echo ""
 
 cd "$AR_GLASSES_DIR"
 PYTHONIOENCODING=utf-8 \
-HUD_BROADCAST_ENABLED=true \
-RETRIEVAL_ENABLED=true \
-SAVE_TO_MEMORY=true \
+AUTO_ENROLL_ENABLED="$AUTO_ENROLL_ENABLED" \
+HUD_BROADCAST_ENABLED="$HUD_BROADCAST_ENABLED" \
+RETRIEVAL_ENABLED="$RETRIEVAL_ENABLED" \
+SAVE_TO_MEMORY="$SAVE_TO_MEMORY" \
   python dashboard.py "${DASHBOARD_ARGS[@]}"

@@ -1,6 +1,6 @@
 # ArgusEye
 
-Smart glasses that recognize faces in real time, recall everything you've talked about with that person, and surface a conversation prompt directly on your heads-up display — so you never blank on someone's name or forget what you last discussed.
+Smart glasses software that recognize faces in real time, recall everything you've talked about with that person, and surface a conversation prompt directly on your heads-up display — so you never blank on someone's name or forget what you last discussed.
 
 ---
 
@@ -12,9 +12,9 @@ You wear a pair of smart glasses. As you move through the world and talk to peop
 2. **Listening** — the microphone transcribes the conversation and figures out who said what (speaker diarization). That transcript gets fed into a knowledge graph that extracts and stores facts about the people you talk to.
 3. **Remembering** — the next time a known face appears, the glasses look up everything stored about that person and push a context card to the HUD: their name, what you talked about last time, and a suggested conversation opener.
 
-After each session, you open the **[ArgusEye Mobile App](https://github.com/MaxOrangeTabby/ARgusEye-mobile-app)** and put names to faces — linking the face fingerprints to real identities so the knowledge graph knows who is who.
+The frontend running on the glasses is the **[ArgusEye Glasses App](https://github.com/MaxOrangeTabby/ARgusEye-glasses-app-v2)** — a Unity app that streams camera + mic to the backend and renders the HUD context card. We built and tested on the **Inmo Air 3**, but because the app targets Android the same APK runs on any Android phone, which can stand in for the glasses (phone camera, phone mic, phone screen as the HUD).
 
-> **The companion app is required for the full pipeline.** Without it, the system can detect and track faces but cannot associate them with real names. Retrieval, HUD prompts, and knowledge graph storage only activate for labeled (named) people — so faces that haven't been named through the app are invisible to the memory system.
+After each session, you open the **[ArgusEye Mobile App](https://github.com/MaxOrangeTabby/ARgusEye-mobile-app)** and put names to faces — linking the face fingerprints to real identities so the knowledge graph knows who is who.
 
 ---
 
@@ -37,7 +37,7 @@ Smart Glasses (camera + mic)
         │
         └─── Audio stream ──► Voice Activity Detection (Silero VAD)
                                     │
-                               WhisperX transcription + speaker diarization
+                               Whisper transcription (Groq API)
                                     │
                                Zep Graphiti — extracts facts, entities, relationships
                                     │
@@ -52,7 +52,8 @@ Smart Glasses (camera + mic)
 | **People API** | FastAPI server — manages face identity database, serves the companion app | 5000 |
 | **Dashboard** | Flask web app — live debug view of the video stream, captions, and retrieval results | 5050 |
 | **HUD Broadcast** | WebSocket server — pushes real-time context cards to the Unity glasses app | 8765 |
-| **[ArgusEye Mobile App](https://github.com/MaxOrangeTabby/ARgusEye-mobile-app)** ⚠️ **Required** | Android app — browse face clusters after a session and assign real names to them | connects to :5000 |
+| **[ArgusEye Glasses App](https://github.com/MaxOrangeTabby/ARgusEye-glasses-app-v2)** | Unity Android app — runs on the Inmo Air 3 (or any Android phone) as the camera, mic, and HUD frontend | connects to :8765 |
+| **[ArgusEye Mobile App](https://github.com/MaxOrangeTabby/ARgusEye-mobile-app)** | Android app — browse face clusters after a session and assign real names to them | connects to :5000 |
 
 ---
 
@@ -70,13 +71,12 @@ Before installing anything, make sure you have these tools installed on your mac
 
 ### API Keys
 
-You need to add these to `ar-glasses/.env`. A template is at `ar-glasses/.env.example` (copy it to `.env` and fill in your keys).
+Create `ar-glasses/.env` and add the following keys to it.
 
 | Key | Where to get it | Used for |
 |---|---|---|
 | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com/api-keys) | Knowledge graph extraction (GPT-4o-mini) and context post-processing |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com/) | Fast Whisper transcription via Groq API |
-| `HUGGINGFACE_TOKEN` | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) | Downloading WhisperX speaker diarization model |
 
 ---
 
@@ -86,7 +86,7 @@ You need to add these to `ar-glasses/.env`. A template is at `ar-glasses/.env.ex
 
 ```bash
 git clone https://github.com/murphymy04/ARsenal-Ravengers
-cd ARsenal-Ravengers
+cd argus
 ```
 
 ### 2. Create a Python virtual environment
@@ -125,16 +125,11 @@ pip install -r requirements.txt
 
 ### 5. Configure environment variables
 
-```bash
-cp ar-glasses/.env.example ar-glasses/.env
-```
-
-Open `ar-glasses/.env` and fill in your API keys:
+Create `ar-glasses/.env` and fill in your API keys:
 
 ```env
 OPENAI_API_KEY=sk-...
 GROQ_API_KEY=gsk_...
-HUGGINGFACE_TOKEN=hf_...
 ```
 
 ### 6. Make the run script executable *(first time only)*
@@ -170,12 +165,24 @@ Starting dashboard (http://localhost:5050)...
 ### Options
 
 ```bash
-./run.sh                     # Standard run — glasses mode, background logs suppressed
+./run.sh                     # Standard run — enroll mode (default), background logs suppressed
+./run.sh --enroll            # Enroll mode — save conversations + retrieve + broadcast to HUD
+./run.sh --retrieval         # Retrieval-only mode — recognize faces and push HUD context, but
+                             #   do NOT save the current conversation to the knowledge graph
 ./run.sh --debug             # Show live logs from all background services
 ./run.sh --skip-neo4j        # Skip Neo4j (useful if it's already running)
 ./run.sh --skip-api          # Skip people API
 ./run.sh -- --fast video.mp4 # Pass custom args to dashboard (e.g. run on a video file)
 ```
+
+#### Modes
+
+`run.sh` runs in one of two mutually exclusive modes:
+
+| Mode | `AUTO_ENROLL_ENABLED` | `SAVE_TO_MEMORY` | `RETRIEVAL_ENABLED` | `HUD_BROADCAST_ENABLED` | When to use |
+|---|---|---|---|---|---|
+| `--enroll` *(default)* | `true` | `true` | `true` | `true` | Capturing new conversations — unknown faces get auto-clustered (so the companion app can label them later) and facts get written to Neo4j |
+| `--retrieval` | `false` | `false` | `true` | `true` | Demoing or testing recognition — only already-labeled people are recognized; no new clusters are created and the current session is not written to the graph |
 
 ### Accessing the services
 
@@ -240,7 +247,9 @@ When a labeled person is recognized, a JSON message is sent over WebSocket to an
 }
 ```
 
-**To connect a Unity app:** open a WebSocket connection to `ws://<laptop-ip>:8765`. Each `OnMessage` delivers one JSON object. Rate-limited to one message per person per 30 seconds (configurable via `RETRIEVAL_COOLDOWN_SECONDS`).
+**Reference frontend:** [ArgusEye Glasses App (Unity)](https://github.com/MaxOrangeTabby/ARgusEye-glasses-app-v2). Built and tested on the **Inmo Air 3**, but since the glasses run Android the same APK installs on any Android phone — useful for development without the hardware (the phone's camera/mic/screen stand in for the glasses).
+
+**To connect a Unity app:** open a WebSocket connection to `ws://<laptop-ip>:8765`. Each `OnMessage` delivers one JSON object. Rate-limited to one message per person per 10 seconds (configurable via `RETRIEVAL_COOLDOWN_SECONDS`).
 
 **To test without a glasses device:**
 
@@ -258,12 +267,13 @@ All defaults live in the config files under `ar-glasses/`. Override any of them 
 
 | Variable | Default | What it controls |
 |---|---|---|
+| `AUTO_ENROLL_ENABLED` | `false` | Auto-cluster unknown faces into pending "Person N" clusters so the companion app can label them. Off → unknown faces always show as `Unknown` |
 | `SAVE_TO_MEMORY` | `false` | Save conversations to Neo4j after each session |
 | `RETRIEVAL_ENABLED` | `false` | Query knowledge graph when a known face appears |
 | `HUD_BROADCAST_ENABLED` | `false` | Start the WebSocket server for the glasses HUD |
-| `RETRIEVAL_COOLDOWN_SECONDS` | `30` | Minimum seconds between retrieval queries for the same person |
+| `RETRIEVAL_COOLDOWN_SECONDS` | `10` | Minimum seconds between retrieval queries for the same person |
 
-> `run.sh` sets all three of the above to `true` automatically.
+> `run.sh` sets these automatically based on mode: `--enroll` (default) turns all four on; `--retrieval` turns on only `RETRIEVAL_ENABLED` and `HUD_BROADCAST_ENABLED`.
 
 ### Database connection
 
@@ -280,7 +290,7 @@ All defaults live in the config files under `ar-glasses/`. Override any of them 
 | `CAMERA_FPS` | `30` | Target frame rate from the glasses camera |
 | `SAMPLE_RATE` | `16000` | Audio sample rate in Hz |
 | `VISION_STRIDE` | `5` | Process faces every Nth frame (higher = faster, less precise) |
-| `LIVE_BUFFER_SECONDS` | `10` | How many seconds of audio/video to process in each window |
+| `LIVE_BUFFER_SECONDS` | `7` | How many seconds of audio/video to process in each window |
 
 ### HUD broadcast
 

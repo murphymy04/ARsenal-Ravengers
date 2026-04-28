@@ -23,17 +23,12 @@ from pipeline.retrieval import RetrievalDispatcher
 from pipeline.segments import merge_close_segments
 from processing.face_detector import FaceDetector
 from processing.face_tracker import FaceTracker
-from processing.speaking_detector import SpeakingDetector
 from processing.vad_speaker import VadSpeaker
 from storage.speaking_log import SpeakingLog
 
-from config import SPEAKING_BACKEND
-
 
 def _create_speaker(fps: float, static_boundary: float | None = None):
-    if SPEAKING_BACKEND == "vad_rms":
-        return VadSpeaker(fps=fps, static_boundary=static_boundary)
-    return SpeakingDetector(fps=fps)
+    return VadSpeaker(fps=fps, static_boundary=static_boundary)
 
 
 class DiarizationPipeline:

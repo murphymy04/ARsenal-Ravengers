@@ -20,14 +20,14 @@ Smart glasses that passively record conversations and video, build a persistent 
 ```
 Audio Stream
   → Voice Activity Detection (VAD)
-  → WhisperX  [transcription + speaker diarization]
-  → Transcript with speaker labels
+  → Whisper  [transcription via Groq API]
+  → Transcript with speaker labels (assigned by VAD/RMS pipeline)
   → Zep Graphiti  [episode extraction]  [T]
   → Knowledge Graph (Neo4j)
 ```
 
-1. **VAD** — filters silence; only passes active speech segments downstream.
-2. **WhisperX** — transcribes speech and diarizes speakers (labels each segment by speaker ID).
+1. **VAD** — filters silence and assigns each speech segment to wearer vs. other based on per-track RMS amplitude.
+2. **Whisper** — transcribes speech via the Groq Whisper API.
 3. **Transcript with speaker labels** — the central artifact that gets enriched and stored.
 4. **Zep Graphiti** — parses the transcript into "episodes": entities, relationships, and facts are extracted and written into the Neo4j knowledge graph. *(T = triggered on transcript completion)*
 

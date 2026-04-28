@@ -35,7 +35,6 @@ from config import (
     MIN_SIGHTINGS_TO_CLUSTER,
     PENDING_CLUSTER_SIMILARITY,
     PENDING_EXPIRY_FRAMES,
-    SPEAKING_BACKEND,
     FLASK_HOST,
     FLASK_PORT,
 )
@@ -135,7 +134,6 @@ def run_video_loop(
 
     speaking_log = SpeakingLog()
     log_path = DB_PATH.parent / f"speaking_log_{int(time.time())}.json"
-    speaking_det = _init_speaking_detector()
 
     # Single-slot queues for inter-thread communication
     frame_slot: queue.Queue = queue.Queue(maxsize=1)
@@ -152,7 +150,6 @@ def run_video_loop(
             embedder,
             matcher,
             db,
-            speaking_det,
             speaking_log,
         ),
         daemon=True,
@@ -203,8 +200,6 @@ def run_video_loop(
     finally:
         stop_event.set()
         processor.join(timeout=3)
-        if speaking_det is not None:
-            speaking_det.close()
         speaking_log.save(log_path)
         cv2.destroyAllWindows()
 
@@ -219,7 +214,6 @@ def _recognition_loop(
     embedder: FaceEmbedder,
     matcher: FaceMatcher,
     db: Database,
-    speaking_det,
     speaking_log: SpeakingLog,
 ):
     """Background thread: face detection → matching → console output."""
@@ -280,15 +274,8 @@ def _recognition_loop(
 
         matches, track_ids, _ = tracker.update(faces, raw_matches, frame_count)
 
-        if speaking_det is not None:
-            for face, tid in zip(faces, track_ids):
-                speaking_det.add_crop(tid, face.crop)
-            speaking_det.run_inference(frame_count, active_track_ids=set(track_ids))
-
         ts = time.time()
         for face, match, tid in zip(faces, matches, track_ids):
-            if speaking_det is not None:
-                face.is_speaking = speaking_det.get_speaking(tid)
             speaking_log.update(
                 track_id=tid,
                 person_id=match.person_id if match.is_known else None,
@@ -324,22 +311,6 @@ def _recognition_loop(
         result_slot.put_nowait(annotated)
 
         frame_count += 1
-
-
-def _init_speaking_detector():
-    """Load the speaking detector selected in config, or None on failure."""
-    if SPEAKING_BACKEND != "light_asd":
-        print("Speaking detection: MediaPipe jawOpen blendshape")
-        return None
-    try:
-        from processing.speaking_detector import SpeakingDetector
-
-        det = SpeakingDetector()
-        print("Speaking detection: Light-ASD (audio-visual)")
-        return det
-    except Exception as e:
-        print(f"Light-ASD init failed ({e}), falling back to MediaPipe.")
-        return None
 
 
 def _maybe_store_embedding(
