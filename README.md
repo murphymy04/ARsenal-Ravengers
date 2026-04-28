@@ -8,13 +8,15 @@ Smart glasses software that recognize faces in real time, recall everything you'
 
 You wear a pair of smart glasses. As you move through the world and talk to people, the glasses are quietly doing three things at once:
 
-1. **Watching** — the camera continuously detects and tracks faces. Each face gets converted into a unique fingerprint (called an embedding) and stored.
+1. **Watching** — the camera continuously detects and tracks faces. Each face gets converted into a unique embedding and stored.
 2. **Listening** — the microphone transcribes the conversation and figures out who said what (speaker diarization). That transcript gets fed into a knowledge graph that extracts and stores facts about the people you talk to.
 3. **Remembering** — the next time a known face appears, the glasses look up everything stored about that person and push a context card to the HUD: their name, what you talked about last time, and a suggested conversation opener.
 
-The frontend running on the glasses is the **[ArgusEye Glasses App](https://github.com/MaxOrangeTabby/ARgusEye-glasses-app-v2)** — a Unity app that streams camera + mic to the backend and renders the HUD context card. We built and tested on the **Inmo Air 3**, but because the app targets Android the same APK runs on any Android phone, which can stand in for the glasses (phone camera, phone mic, phone screen as the HUD).
+The frontend running on the glasses is the **[ArgusEye Glasses App](https://github.com/MaxOrangeTabby/ARgusEye-glasses-app-v2)** — a Unity app that streams camera + mic to the backend and renders the HUD context card. We built and tested on the **Inmo Air 3**, but because the app targets Android the same APK runs on any Android phone, which can stand in for the glasses.
 
-After each session, you open the **[ArgusEye Mobile App](https://github.com/MaxOrangeTabby/ARgusEye-mobile-app)** and put names to faces — linking the face fingerprints to real identities so the knowledge graph knows who is who.
+After each session, you open the **[ArgusEye Mobile App](https://github.com/MaxOrangeTabby/ARgusEye-mobile-app)** and put names to faces — linking the face embeddings to real identities so the knowledge graph knows who is who.
+
+> **2-person conversations only.** Robust multi-party speaker diarization (correctly attributing speech to each of three or more speakers in real time) is still an open research problem and current approaches degrade significantly beyond two speakers. ArgusEye is designed and validated only for **1-on-1 conversations between the wearer and one other person**. In groups of three or more, transcripts attributed to "the other person" may merge multiple speakers, which corrupts the per-person facts written to the knowledge graph. Treat group settings as unsupported.
 
 ---
 
