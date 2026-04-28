@@ -10,16 +10,13 @@ mediapipe>=0.10.20
 # Face embedding (EdgeFace backbone)
 timm>=0.9
 
-# Speaking detection (Light-ASD)
-python_speech_features>=0.6
-librosa
+# Audio capture + voice activity detection
 sounddevice
 silero-vad
 
-# Transcription (Groq Whisper API + whisperx wav2vec2 alignment)
+# Transcription (Groq Whisper API)
 groq
 python-dotenv
-whisperx
 
 # Knowledge graph
 graphiti-core
@@ -28,12 +25,10 @@ graphiti-core
 fastapi>=0.104
 uvicorn[standard]>=0.24
 python-multipart
-firebase-admin>=7.0.0
 
 # Debug viewer
 flask>=3.0
 flask-socketio>=5.3
-plotly>=5.0
 
 # HUD broadcast (Unity glasses app)
 websockets>=12

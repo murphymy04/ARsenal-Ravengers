@@ -4,8 +4,6 @@ clustering, and speaking-detection backends.
 
 import os
 
-from paths import DATA_DIR
-
 AUTO_ENROLL_ENABLED = os.getenv("AUTO_ENROLL_ENABLED", "false").lower() == "true"
 
 # Face detection (MediaPipe BlazeFace)
@@ -48,7 +46,6 @@ FACE_BLUR_THRESHOLD = 70.0  # Laplacian variance — lower for H.264 compressed 
 
 
 # Speaking detection backend
-# Set SPEAKING_BACKEND = "light_asd" to use Light-ASD (audio-visual, more accurate).
 # Set SPEAKING_BACKEND = "mediapipe" to use the MediaPipe jawOpen blendshape.
 # Set SPEAKING_BACKEND = "vad_rms" to use Silero VAD + RMS amplitude (wearer vs other).
 SPEAKING_BACKEND = "vad_rms"
@@ -58,18 +55,6 @@ SPEAKING_BACKEND = "vad_rms"
 SPEAKING_JAW_THRESHOLD = (
     0.005  # jawOpen score above which the person is considered speaking
 )
-
-
-# Light-ASD (used when SPEAKING_BACKEND = "light_asd")
-LIGHT_ASD_WEIGHTS = (
-    DATA_DIR / "light_asd.model"
-)  # downloaded automatically on first run
-LIGHT_ASD_VIDEO_FRAMES = (
-    30  # rolling window of face crops per inference (≈1 s at 30 FPS)
-)
-LIGHT_ASD_MIN_FRAMES = 10  # minimum buffered frames before running inference
-LIGHT_ASD_INFERENCE_INTERVAL = 5  # run inference every N video frames
-LIGHT_ASD_SPEAKING_THRESHOLD = 0.25  # softmax probability above which = speaking
 
 
 # VAD + RMS speaker detection (used when SPEAKING_BACKEND = "vad_rms")

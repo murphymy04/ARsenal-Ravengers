@@ -65,7 +65,7 @@ def update_other_mean(state: AdaptiveRmsState, rms_excess: float) -> None:
 
 
 class VadSpeaker:
-    """Drop-in replacement for SpeakingDetector using Silero VAD + RMS."""
+    """Per-track speaking detector using Silero VAD + per-track RMS amplitude."""
 
     def __init__(
         self,
