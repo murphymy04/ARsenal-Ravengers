@@ -1,10 +1,5 @@
 """Identity module implementations for the diarization pipeline.
 
-This was previosly coupled in main.py. I wanted to rebuild this incrementally
-to make sure it worked. It works and now acts as a reusable component.
-
-Now that it is a module, it is also much easier to optimize it.
-
 NullIdentity returns unknown for every face (zero dependencies).
 FullIdentity wraps FaceEmbedder + FaceMatcher + Database for real recognition
 with automatic pending-cluster promotion.
@@ -31,10 +26,6 @@ class NullIdentity:
         return IdentityMatch(
             person_id=None, name="unknown", confidence=0.0, is_known=False
         )
-
-
-# This is exactly the same code as in main.py
-# Just putting it into a separate file
 
 
 class FullIdentity:

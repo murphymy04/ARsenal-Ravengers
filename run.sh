@@ -209,7 +209,7 @@ fi
 if ! $SKIP_API; then
   free_port 5000
   echo "Starting people API..."
-  (cd "$AR_GLASSES_DIR" && python -m api.api 2>&1 \
+  (cd "$AR_GLASSES_DIR" && python -u -m api.api 2>&1 \
     | service_output "api") &
   PIDS+=($!)
   wait_for_port "people API" 5000 20

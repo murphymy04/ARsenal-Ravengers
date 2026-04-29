@@ -6,7 +6,7 @@ FACE LABELING PIPELINE — How It Works
 The labeling pipeline is how unknown faces (discovered during live video) transition
 from "auto-labeled clusters" to "real people with names". It's a multi-stage workflow:
 
-STAGE 1: DISCOVERY (video pipeline, ar-glasses/main.py)
+STAGE 1: DISCOVERY (video pipeline, ar-glasses/pipeline/live.py via FullIdentity)
   └─ Unknown face detected → Embedded → Accumulated in "pending buffer"
      After MIN_SIGHTINGS_TO_CLUSTER (8) consistent sightings
      └─ Promoted to auto-labeled cluster: Person_ID, name="Person {ID}", is_labeled=FALSE
@@ -30,7 +30,7 @@ STAGE 4: USE (video pipeline recognition)
 
 === DATA FLOW IN DETAIL ===
 
-1. UNKNOWN FACE ACCUMULATION (main.py video loop)
+1. UNKNOWN FACE ACCUMULATION (FullIdentity in pipeline/identity.py)
    ─────────────────────────────────────────
 
    for each frame:
