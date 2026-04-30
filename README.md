@@ -125,7 +125,7 @@ pip install -r requirements.txt
 >
 > Check your CUDA version with `nvidia-smi` and pick the matching build at [pytorch.org](https://pytorch.org/get-started/locally/).
 
-### 5. Configure environment variables
+### 4. Configure environment variables
 
 Create `ar-glasses/.env` and fill in your API keys:
 
@@ -134,7 +134,7 @@ OPENAI_API_KEY=sk-...
 GROQ_API_KEY=gsk_...
 ```
 
-### 6. Make the run script executable *(first time only)*
+### 5. Make the run script executable *(first time only)*
 
 ```bash
 chmod +x run.sh
@@ -331,6 +331,26 @@ ARsenal-Ravengers/
 └── docs/
     └── high_level.md           ← Full system design document
 ```
+
+---
+
+## Documentation
+
+This README is the operator quickstart. Deeper material lives in [`docs/`](docs/):
+
+| Doc | What's in it |
+|---|---|
+| [docs/high_level.md](docs/high_level.md) | End-to-end system design |
+| [docs/requirements.md](docs/requirements.md) | Goals, scope, non-goals, functional & non-functional requirements |
+| [docs/data-model.md](docs/data-model.md) | SQLite schema, Neo4j entities/edges, in-memory dataclasses, HUD payload |
+| [docs/api.md](docs/api.md) | People API endpoints, dashboard routes, HUD WebSocket contract |
+| [docs/development.md](docs/development.md) | Repo layout, running individual services, mode toggles, common gotchas |
+| [docs/evaluation.md](docs/evaluation.md) | Face recognition + speaker classification eval, ceiling analysis |
+| [docs/operations.md](docs/operations.md) | Backups, resets, key rotation, health checks |
+| [docs/decisions/](docs/decisions/) | ADRs — why we picked MediaPipe + EdgeFace, Graphiti, Groq Whisper |
+| [docs/knowledge-explorer.md](docs/knowledge-explorer.md) | Dashboard "Knowledge" tab — graph viz + chat |
+| [docs/labeling-pipeline.md](docs/labeling-pipeline.md) | Auto-cluster → label → recognize lifecycle |
+| [docs/neo4j-queries.md](docs/neo4j-queries.md) | Cypher cookbook for the knowledge graph |
 
 ---
 
