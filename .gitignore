@@ -60,8 +60,7 @@ ARgusEye-glasses-app-v2/
 ARgusEye-glasses-app-v2-2026-04-19-18-54-09/
 
 # Claude Code
-**/.claude/scheduled_tasks.lock
-**/.claude/worktrees/
+**/.claude/
 
 # Relay binaries (rebuild from tunnel/relay.go)
 ar-glasses/tunnel/relay-glasses
